@@ -416,6 +416,20 @@ const DataManagement: React.FC = memo(() => {
     },
   ], [handleUpdateSingle, updatingIds]);
 
+  // 上传控件属性设置
+  const uploadProps: UploadProps = {
+    onRemove: () => {
+      setFileList([]);
+    },
+    beforeUpload: (file) => {
+      if (beforeUpload(file)) {
+        setFileList([file]);
+      }
+      return false; // 阻止自动上传
+    },
+    fileList,
+  };
+
   // 处理数据删除 - 使用useCallback优化
   const handleDelete = useCallback(async (id: string) => {
     Modal.confirm({
@@ -466,6 +480,109 @@ const DataManagement: React.FC = memo(() => {
       setChartLoading(false);
     }
   }, []);
+
+  // 上传前检查CSV文件
+  const beforeUpload = (file: any) => {
+    const isCsv = file.type === 'text/csv' || (file.name && file.name.endsWith('.csv'));
+    if (!isCsv) {
+      message.error('只能上传CSV文件!');
+    }
+    return isCsv;
+  };
+
+  // 手动上传CSV到后端 /api/data/upload
+  const handleUpload = async (values: any) => {
+    if (fileList.length === 0) {
+      message.error('请选择要上传的文件');
+      return;
+    }
+
+    const formData = new FormData();
+    formData.append('file', fileList[0]);
+
+    const params = new URLSearchParams({
+      symbol: values.symbol,
+      name: values.name,
+      type: values.type,
+      source_id: values.source_id?.toString() || ''
+    });
+    if (values.exchange) {
+      params.append('exchange', values.exchange);
+    }
+
+    const url = `/api/data/upload?${params.toString()}`;
+
+    setLoading(true);
+    try {
+      const response = await axios.post(url, formData, {
+        headers: { 'Content-Type': 'multipart/form-data' }
+      });
+      if (response.data && response.data.status === 'success') {
+        message.success(response.data.message || '上传成功');
+        setUploadVisible(false);
+        form.resetFields();
+        setFileList([]);
+        fetchList(pagination.current, pagination.pageSize);
+      } else {
+        message.error(response.data?.message || '上传失败');
+      }
+    } catch (error: any) {
+      console.error('上传失败:', error);
+      const detail = error.response?.data?.detail;
+      if (detail) {
+        if (typeof detail === 'object') {
+          message.error(JSON.stringify(detail));
+        } else {
+          message.error(detail);
+        }
+      } else {
+        message.error('上传失败，请重试');
+      }
+    } finally {
+      setLoading(false);
+    }
+  };
+
+  // 自动抓取到后端 /api/data/fetch
+  const handleFetch = async (values: any) => {
+    setFetchLoading(true);
+    try {
+      const payload = {
+        symbol: values.symbol,
+        name: values.name,
+        type: values.type,
+        source_id: values.source_id,
+        start_date: values.start_date ? values.start_date.format('YYYY-MM-DD') : undefined,
+        end_date: values.end_date ? values.end_date.format('YYYY-MM-DD') : undefined,
+      };
+
+      const response = await axios.post('/api/data/fetch', payload, {
+        headers: { 'Content-Type': 'application/json' }
+      });
+      if (response.data && response.data.status === 'success') {
+        message.success(response.data.message || '数据抓取成功');
+        setUploadVisible(false);
+        form.resetFields();
+        fetchList(pagination.current, pagination.pageSize);
+      } else {
+        message.error(response.data?.message || '数据抓取失败');
+      }
+    } catch (error: any) {
+      console.error('数据抓取失败:', error);
+      const detail = error.response?.data?.detail;
+      if (detail) {
+        if (typeof detail === 'object') {
+          message.error(JSON.stringify(detail));
+        } else {
+          message.error(detail);
+        }
+      } else {
+        message.error('数据抓取失败，请重试');
+      }
+    } finally {
+      setFetchLoading(false);
+    }
+  };
 
 
 
@@ -585,6 +702,144 @@ const DataManagement: React.FC = memo(() => {
           />
         </Spin>
       </Card>
+
+      {/* 上传/抓取数据弹窗（恢复旧版双模式） */}
+      <Modal
+        title="市场数据管理"
+        open={uploadVisible}
+        onCancel={() => setUploadVisible(false)}
+        footer={null}
+        width={600}
+      >
+        <div style={{ marginBottom: 20, textAlign: 'center' }}>
+          <Radio.Group
+            value={uploadMode}
+            onChange={(e) => {
+              setUploadMode(e.target.value);
+              form.resetFields();
+              if (e.target.value === 'fetch') {
+                const akShareSource = dataSources.find(source => source.name === 'AkShare抓取');
+                if (akShareSource) {
+                  form.setFieldsValue({ source_id: akShareSource.id });
+                }
+              } else if (e.target.value === 'upload') {
+                const userUploadSource = dataSources.find(source => source.name === '用户上传');
+                if (userUploadSource) {
+                  form.setFieldsValue({ source_id: userUploadSource.id });
+                }
+              }
+            }}
+            buttonStyle="solid"
+          >
+            <Radio.Button value="fetch">自动抓取</Radio.Button>
+            <Radio.Button value="upload">手动上传</Radio.Button>
+          </Radio.Group>
+        </div>
+
+        <Form
+          form={form}
+          layout="vertical"
+          onFinish={uploadMode === 'fetch' ? handleFetch : handleUpload}
+        >
+          {uploadMode === 'fetch' && (
+            <>
+              <Form.Item name="symbol" label="股票代码" rules={[{ required: true, message: '请输入股票代码' }]}> 
+                <Input placeholder="例如: AAPL, 600519, TSLA" />
+              </Form.Item>
+              <Form.Item name="name" label="股票名称" rules={[{ required: true, message: '请输入股票名称' }]}> 
+                <Input placeholder="例如: 苹果公司, 贵州茅台" />
+              </Form.Item>
+              <Form.Item name="type" label="类型" rules={[{ required: true, message: '请选择类型' }]}> 
+                <Select placeholder="选择类型">
+                  <Option value="A股">A股</Option>
+                  <Option value="港股">港股</Option>
+                  <Option value="美股">美股</Option>
+                  <Option value="期货">期货</Option>
+                  <Option value="指数">指数</Option>
+                  <Option value="加密货币">加密货币</Option>
+                </Select>
+              </Form.Item>
+              <Form.Item name="source_id" label="数据源" rules={[{ required: true, message: '请选择数据源' }]}> 
+                <Select placeholder="选择数据源" disabled>
+                  {dataSources.filter(source => source.name === 'AkShare抓取').map(source => (
+                    <Option key={source.id} value={source.id}>{source.name}</Option>
+                  ))}
+                </Select>
+              </Form.Item>
+              <Form.Item label="日期范围">
+                <DateRangePresets onSelect={(startDate, endDate) => {
+                  form.setFieldsValue({
+                    start_date: dayjs(startDate),
+                    end_date: dayjs(endDate)
+                  });
+                }} />
+                <Row gutter={8}>
+                  <Col span={12}>
+                    <Form.Item name="start_date" noStyle>
+                      <DatePicker placeholder="选择开始日期" style={{ width: '100%' }} format="YYYY-MM-DD" />
+                    </Form.Item>
+                  </Col>
+                  <Col span={12}>
+                    <Form.Item name="end_date" noStyle>
+                      <DatePicker placeholder="选择结束日期" style={{ width: '100%' }} format="YYYY-MM-DD" />
+                    </Form.Item>
+                  </Col>
+                </Row>
+              </Form.Item>
+              <Form.Item>
+                <Space>
+                  <Button type="primary" htmlType="submit" loading={fetchLoading} icon={<SyncOutlined />}>开始抓取</Button>
+                  <Button onClick={() => setUploadVisible(false)}>取消</Button>
+                </Space>
+              </Form.Item>
+            </>
+          )}
+
+          {uploadMode === 'upload' && (
+            <>
+              <Form.Item name="file" label="数据文件" rules={[{ required: true, message: '请选择要上传的CSV文件' }]}> 
+                <Upload {...uploadProps}>
+                  <Button icon={<UploadOutlined />}>选择CSV文件</Button>
+                  <Text type="secondary" style={{ marginLeft: 8 }}>仅支持CSV格式的数据文件</Text>
+                </Upload>
+              </Form.Item>
+              <Form.Item name="symbol" label="股票代码" rules={[{ required: true, message: '请输入股票代码' }]}> 
+                <Input placeholder="例如: AAPL, 600000.SH" />
+              </Form.Item>
+              <Form.Item name="name" label="股票名称" rules={[{ required: true, message: '请输入股票名称' }]}> 
+                <Input placeholder="例如: 苹果公司, 浦发银行" />
+              </Form.Item>
+              <Form.Item name="type" label="类型" rules={[{ required: true, message: '请选择类型' }]}> 
+                <Select placeholder="选择类型">
+                  <Option value="A股">A股</Option>
+                  <Option value="港股">港股</Option>
+                  <Option value="美股">美股</Option>
+                  <Option value="期货">期货</Option>
+                  <Option value="指数">指数</Option>
+                  <Option value="加密货币">加密货币</Option>
+                </Select>
+              </Form.Item>
+              <Form.Item name="exchange" label="交易所">
+                <Input placeholder="例如: NYSE, SSE" />
+              </Form.Item>
+              <Form.Item name="source_id" label="数据源" rules={[{ required: true, message: '请选择数据源' }]}> 
+                <Select placeholder="选择数据源" disabled>
+                  {dataSources.filter(source => source.name === '用户上传').map(source => (
+                    <Option key={source.id} value={source.id}>{source.name}</Option>
+                  ))}
+                </Select>
+              </Form.Item>
+              <Form.Item>
+                <Space>
+                  <Button type="primary" htmlType="submit" loading={loading}>上传数据</Button>
+                  <Button onClick={() => setUploadVisible(false)}>取消</Button>
+                </Space>
+              </Form.Item>
+            </>
+          )}
+        </Form>
+      </Modal>
+
 
       {/* K线图模态框 */}
       <Modal
