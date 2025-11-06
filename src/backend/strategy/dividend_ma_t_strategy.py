@@ -62,6 +62,15 @@ class DividendMATStrategy(StrategyTemplate):
         chunk_count = int(self.parameters.get("t_chunk_count", 5))
         max_pos = float(self.parameters.get("total_max_position", 1.0))
 
+        # 临时调试日志：参数快照
+        try:
+            self.log(
+                f"参数快照 long_ma={long_ma}, threshold={threshold}, baseline={baseline}, chunk_count={chunk_count}, max_pos={max_pos}",
+                "INFO",
+            )
+        except Exception:
+            pass
+
         # 计算长期均线与偏离
         df["long_ma"] = df["close"].rolling(window=long_ma, min_periods=long_ma).mean()
         df["dev_pct"] = (df["close"] - df["long_ma"]) / df["long_ma"]
@@ -77,6 +86,18 @@ class DividendMATStrategy(StrategyTemplate):
         t_capacity = max(max_pos - baseline, 0.0)
         t_chunk = t_capacity / chunk_count if chunk_count > 0 else 0.0
 
+        try:
+            self.log(
+                f"T容量与分批 t_capacity={t_capacity:.4f}, t_chunk={t_chunk:.4f}",
+                "DEBUG",
+            )
+            if t_capacity <= 0:
+                self.log("t_capacity<=0，只有基线仓位，将不会执行小T交易", "WARNING")
+            if chunk_count <= 0:
+                self.log("chunk_count<=0，分批次数为零，无法进行小T分批", "WARNING")
+        except Exception:
+            pass
+
         # 顺序遍历，跟踪小T仓位
         current_t = 0.0
         for i in range(len(df)):
@@ -90,6 +111,13 @@ class DividendMATStrategy(StrategyTemplate):
                 df.at[df.index[i], "t_position"] = current_t
                 df.at[df.index[i], "cumulative_position"] = baseline + current_t
                 df.at[df.index[i], "position_size"] = baseline + current_t
+                try:
+                    self.log(
+                        f"{df.index[i]} MA未就绪: long_ma={long_ma}",
+                        "DEBUG",
+                    )
+                except Exception:
+                    pass
                 continue
 
             # 触发条件：偏离超过阈值
@@ -98,14 +126,35 @@ class DividendMATStrategy(StrategyTemplate):
                 current_t += t_chunk
                 df.at[df.index[i], "signal"] = 1
                 df.at[df.index[i], "trigger_reason"] = f"buy_deviation_{dev:.4f}"
+                try:
+                    self.log(
+                        f"{df.index[i]} 触发买入: dev={dev:.4f} <= -{threshold}, t_chunk={t_chunk:.4f}, t_pos={current_t:.4f}",
+                        "INFO",
+                    )
+                except Exception:
+                    pass
             elif dev >= threshold and (current_t - t_chunk) >= 0.0:
                 # 高于均线阈值 => 卖出一个小T份
                 current_t -= t_chunk
                 df.at[df.index[i], "signal"] = -1
                 df.at[df.index[i], "trigger_reason"] = f"sell_deviation_{dev:.4f}"
+                try:
+                    self.log(
+                        f"{df.index[i]} 触发卖出: dev={dev:.4f} >= {threshold}, t_chunk={t_chunk:.4f}, t_pos={current_t:.4f}",
+                        "INFO",
+                    )
+                except Exception:
+                    pass
             else:
                 df.at[df.index[i], "signal"] = 0
                 df.at[df.index[i], "trigger_reason"] = "hold"
+                try:
+                    self.log(
+                        f"{df.index[i]} 持有: dev={dev:.4f}, threshold=±{threshold}, t_pos={current_t:.4f}",
+                        "DEBUG",
+                    )
+                except Exception:
+                    pass
 
             df.at[df.index[i], "t_position"] = current_t
             df.at[df.index[i], "cumulative_position"] = baseline + current_t
@@ -114,6 +163,14 @@ class DividendMATStrategy(StrategyTemplate):
         # 附加符号列（若可用）
         if "symbol" in df.columns:
             df["symbol"] = df["symbol"]
+
+        # 临时调试日志：统计摘要
+        try:
+            buy_cnt = int((df["signal"] == 1).sum())
+            sell_cnt = int((df["signal"] == -1).sum())
+            self.log(f"统计摘要: 买入={buy_cnt}, 卖出={sell_cnt}", "INFO")
+        except Exception:
+            pass
 
         return df
 

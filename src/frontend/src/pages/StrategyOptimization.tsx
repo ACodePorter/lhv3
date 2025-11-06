@@ -387,7 +387,31 @@ const StrategyOptimization: React.FC = () => {
         message.warning('未识别到可优化的数值型参数');
         return;
       }
-      setParameterSpaces(spaces);
+      // 合并现有参数空间：若已有备注(description)非空，则保留原备注不覆盖
+      const existingByName = new Map<string, ParameterSpace>(
+        (parameterSpaces || []).map((s) => [s.parameter_name, s])
+      );
+
+      const merged: ParameterSpace[] = spaces.map((s) => {
+        const old = existingByName.get(s.parameter_name);
+        if (old) {
+          const hasRemark = !!old.description && String(old.description).trim().length > 0;
+          return {
+            ...s,
+            description: hasRemark ? old.description : s.description,
+          };
+        }
+        return s;
+      });
+
+      // 追加未被本次识别覆盖的旧参数空间（保持用户已配置项）
+      for (const [name, old] of existingByName.entries()) {
+        if (!merged.some((s) => s.parameter_name === name)) {
+          merged.push(old);
+        }
+      }
+
+      setParameterSpaces(merged);
       message.success(`已自动识别 ${spaces.length} 个参数，请完善范围后保存`);
     } catch (error) {
       console.error('自动识别策略参数失败:', error);
