@@ -574,43 +574,106 @@ def load_strategy_from_code(code: str, parameters: Dict[str, Any] = None, data: 
             raise ValueError(error_msg)
         
         # 安全实例化辅助：兼容不同 __init__ 签名，避免 'unexpected keyword' 错误
-        def _safe_instantiate(cls, name_value, data_value, parameters_value):
+        def _safe_instantiate(cls, name, data, parameters):
             sig = None
             try:
                 sig = inspect.signature(cls.__init__)
             except Exception:
                 pass
+        
+            def _apply_aliases(kwargs):
+                if sig is None:
+                    return kwargs
+                param_names = set(sig.parameters.keys())
+                # parameters 别名
+                if 'parameters' in kwargs and 'parameters' not in param_names:
+                    for alias in ['params', 'config']:
+                        if alias in param_names:
+                            kwargs[alias] = kwargs.pop('parameters')
+                            break
+                # data 别名
+                if 'data' in kwargs and 'data' not in param_names:
+                    for alias in ['df', 'dataset']:
+                        if alias in param_names:
+                            kwargs[alias] = kwargs.pop('data')
+                            break
+                # name 别名（尽量保持 name）
+                if 'name' in kwargs and 'name' not in param_names:
+                    for alias in ['title', 'strategy_name']:
+                        if alias in param_names:
+                            kwargs[alias] = kwargs.pop('name')
+                            break
+                return kwargs
+        
             def _try(kwargs):
-                # 过滤掉未在签名中的参数（除非支持 **kwargs）
-                usable = kwargs
+                usable = _apply_aliases(dict(kwargs))
+                # 无 **kwargs 时过滤无效键
                 if sig is not None:
                     has_var_kw = any(p.kind == inspect.Parameter.VAR_KEYWORD for p in sig.parameters.values())
                     if not has_var_kw:
-                        usable = {k: v for k, v in kwargs.items() if k in sig.parameters}
+                        usable = {k: v for k, v in usable.items() if k in sig.parameters}
                 try:
-                    return cls(**usable)
-                except TypeError:
-                    return None
-            # 依次尝试多种常见组合，尽量从最轻量开始
-            candidates = [
-                {},
-                {"parameters": parameters_value},
-                {"data": data_value},
-                {"name": name_value},
-                {"name": name_value, "data": data_value},
-                {"name": name_value, "parameters": parameters_value},
-                {"data": data_value, "parameters": parameters_value},
-                {"name": name_value, "data": data_value, "parameters": parameters_value},
-            ]
+                    inst = cls(**usable)
+                    logger.debug(f"策略实例化成功，使用参数组合: {list(usable.keys())}")
+                    return inst, set(usable.keys())
+                except TypeError as e:
+                    logger.debug(f"策略实例化失败组合 {list(usable.keys())}: {e}")
+                    return None, set()
+        
+            # 构造优先级队列：先完整、再降级；如提供了 data/parameters，禁止空 {}
+            provided_data = data is not None
+            provided_params = parameters is not None
+            candidates = []
+        
+            # 优先级排序
+            if provided_data and provided_params:
+                candidates = [
+                    {"name": name, "data": data, "parameters": parameters},
+                    {"data": data, "parameters": parameters},
+                    {"name": name, "data": data},
+                    {"name": name, "parameters": parameters},
+                    {"data": data},
+                    {"parameters": parameters},
+                ]
+            elif provided_data:
+                candidates = [
+                    {"name": name, "data": data},
+                    {"data": data},
+                    {"name": name},
+                ]
+            elif provided_params:
+                candidates = [
+                    {"name": name, "parameters": parameters},
+                    {"parameters": parameters},
+                    {"name": name},
+                ]
+            else:
+                candidates = [
+                    {"name": name},
+                    {},
+                ]
+        
+            # 依次尝试
             for kwargs in candidates:
-                inst = _try(kwargs)
+                inst, used_keys = _try(kwargs)
                 if inst is not None:
+                    # 严格校验：若提供了关键参数但未被使用（别名映射后仍不在 used_keys），则继续尝试下一组合
+                    if provided_data and not any(k in used_keys for k in ['data', 'df', 'dataset']):
+                        logger.debug("实例化未包含 data，继续尝试下一组合")
+                        continue
+                    if provided_params and not any(k in used_keys for k in ['parameters', 'params', 'config']):
+                        logger.debug("实例化未包含 parameters，继续尝试下一组合")
+                        continue
                     return inst
-            raise TypeError("策略类无法在兼容模式下实例化，请检查构造函数签名")
+        
+            raise TypeError("策略类无法在兼容模式下实例化，请检查构造函数签名与参数名")
         
         # 首先实例化一个默认策略，用于提取默认参数规范（使用兼容模式，不强制传 name/data/parameters）
         logger.debug(f"实例化默认策略以提取参数规范: {strategy_class.__name__}")
-        default_instance = _safe_instantiate(strategy_class, name_value="动态策略", data_value=None, parameters_value=None)
+        default_instance = strategy_class(name="动态策略", data=None, parameters=None)
+
+        #default_instance = _safe_instantiate(strategy_class, name_value="动态策略", data_value=None, parameters_value=None)
+
         default_params = {}
         # 优先使用 get_strategy_info().parameters
         if hasattr(default_instance, 'get_strategy_info'):
@@ -622,24 +685,24 @@ def load_strategy_from_code(code: str, parameters: Dict[str, Any] = None, data: 
         if not default_params:
             default_params = getattr(default_instance, 'parameters', {}) or {}
         # 进一步回退：类级/模块级默认参数约定名
-        if not default_params:
-            for attr_name in [
-                'DEFAULT_PARAMETERS', 'DEFAULT_PARAMS', 'PARAMETERS',
-                'default_parameters', 'default_params', 'parameters'
-            ]:
-                dp = getattr(strategy_class, attr_name, None)
-                if isinstance(dp, dict) and dp:
-                    default_params = dp
-                    break
-        if not default_params:
-            for attr_name in [
-                'DEFAULT_PARAMETERS', 'DEFAULT_PARAMS', 'PARAMETERS',
-                'default_parameters', 'default_params', 'parameters'
-            ]:
-                dp = module.__dict__.get(attr_name)
-                if isinstance(dp, dict) and dp:
-                    default_params = dp
-                    break
+        # if not default_params:
+        #     for attr_name in [
+        #         'DEFAULT_PARAMETERS', 'DEFAULT_PARAMS', 'PARAMETERS',
+        #         'default_parameters', 'default_params', 'parameters'
+        #     ]:
+        #         dp = getattr(strategy_class, attr_name, None)
+        #         if isinstance(dp, dict) and dp:
+        #             default_params = dp
+        #             break
+        # if not default_params:
+        #     for attr_name in [
+        #         'DEFAULT_PARAMETERS', 'DEFAULT_PARAMS', 'PARAMETERS',
+        #         'default_parameters', 'default_params', 'parameters'
+        #     ]:
+        #         dp = module.__dict__.get(attr_name)
+        #         if isinstance(dp, dict) and dp:
+        #             default_params = dp
+        #             break
 
         # 进行参数一致性校验与合并
         def _type_name(v):
@@ -688,7 +751,9 @@ def load_strategy_from_code(code: str, parameters: Dict[str, Any] = None, data: 
 
         # 使用校验/合并后的参数实例化策略
         logger.debug(f"实例化策略类并应用参数: {strategy_class.__name__}, 参数: {params_to_use}")
-        strategy_instance = _safe_instantiate(strategy_class, name_value="动态策略", data_value=data, parameters_value=params_to_use)
+        strategy_instance = strategy_class(name="动态策略", data=data, parameters=params_to_use)
+
+        # strategy_instance = _safe_instantiate(strategy_class, name_value="动态策略", data_value=data, parameters_value=params_to_use)
         return strategy_instance
     
     finally:
