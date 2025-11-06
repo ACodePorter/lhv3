@@ -838,7 +838,62 @@ async def backtest_strategy(request: Request, db: Session = Depends(get_db)):
             raise ValueError("未提供股票代码")
         if not start_date:
             raise ValueError("未提供开始日期")
-        
+
+        # 在运行回测前进行策略代码验证与可加载性检查
+        try:
+            strategy = db.query(StrategyModel).filter(StrategyModel.id == strategy_id).first()
+            if not strategy:
+                raise ValueError(f"未找到ID为{strategy_id}的策略")
+            raw_code = strategy.code
+            if isinstance(raw_code, (bytes, bytearray)):
+                try:
+                    raw_code = raw_code.decode('utf-8')
+                except Exception:
+                    raw_code = raw_code.decode('latin-1')
+
+            logger.info("开始在回测前验证策略代码…")
+            is_valid, errors = StrategyValidator.validate_strategy_code(raw_code)
+            if not is_valid:
+                error_message = "策略代码验证失败:\n" + "\n".join(errors)
+                logger.error(error_message)
+                return {
+                    "status": "error",
+                    "message": error_message,
+                    "data": {
+                        "is_valid": False,
+                        "errors": errors
+                    }
+                }
+
+            # 进一步尝试加载，捕获相对导入等运行期问题
+            try:
+                load_ok, load_errors = StrategyValidator.test_load_strategy(raw_code)
+                if not load_ok:
+                    error_message = "策略代码可加载性检查失败:\n" + "\n".join(load_errors)
+                    logger.error(error_message)
+                    return {
+                        "status": "error",
+                        "message": error_message,
+                        "data": {
+                            "is_valid": False,
+                            "errors": load_errors
+                        }
+                    }
+            except Exception as e:
+                logger.error(f"策略可加载性检查异常: {e}")
+                return {
+                    "status": "error",
+                    "message": f"策略代码可加载性检查异常: {str(e)}",
+                    "data": None
+                }
+        except Exception as e:
+            logger.error(f"获取或验证策略代码失败: {e}")
+            return {
+                "status": "error",
+                "message": f"获取或验证策略代码失败: {str(e)}",
+                "data": None
+            }
+
         # 初始化回测服务
         from ..api.backtest_service import BacktestService
         backtest_service = BacktestService(db)
