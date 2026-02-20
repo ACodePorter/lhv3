@@ -8,6 +8,7 @@ import {
   LineChartOutlined,
   SettingOutlined,
   HistoryOutlined,
+  RobotOutlined,
 } from '@ant-design/icons';
 
 const { Sider } = Layout;
@@ -32,6 +33,11 @@ const AppSider: React.FC = () => {
       key: '/strategy',
       icon: <CodeOutlined />,
       label: '策略编辑',
+    },
+    {
+      key: '/ai-investment',
+      icon: <RobotOutlined />,
+      label: 'AI实时投资跑数',
     },
     {
       key: 'backtest',

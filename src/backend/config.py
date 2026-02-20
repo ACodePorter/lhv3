@@ -17,13 +17,16 @@ DATABASE_URL = os.getenv("DATABASE_URL", f"sqlite:///{BASE_DIR}/backtesting.db")
 # API配置
 API_KEYS = {
     "alphavantage": os.getenv("ALPHAVANTAGE_API_KEY", ""),
-    "yahoo_finance": "", # 不需要API密钥
-    "akshare": "", # 不需要API密钥
+    "yahoo_finance": "",
+    "akshare": "",
+    "qwen": os.getenv("QWEN_API_KEY", ""),
+    "kimi": os.getenv("KIMI_API_KEY", ""),
+    "deepseek": os.getenv("DEEPSEEK_API_KEY", "sk-249cb27bf7354688bf1568958aa9db8f"),
 }
 
 # 回测配置
-DEFAULT_COMMISSION_RATE = 0.0003  # 默认手续费率
-DEFAULT_SLIPPAGE_RATE = 0.0001    # 默认滑点率
+DEFAULT_COMMISSION_RATE = 0.0003
+DEFAULT_SLIPPAGE_RATE = 0.0001
 
 # 应用配置
 DEBUG = os.getenv("DEBUG", "True").lower() in ("true", "1", "t")

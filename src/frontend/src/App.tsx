@@ -11,6 +11,7 @@ import DataManagement from './pages/DataManagement';
 import StrategyBuilder from './pages/StrategyBuilder';
 import Backtest from './pages/Backtest';
 import StrategyOptimization from './pages/StrategyOptimization';
+import AiInvestment from './pages/AiInvestment';
 import StrategyList from './pages/StrategyList';
 import StrategyEditor from './pages/StrategyEditor';
 import BacktestHistory from './pages/BacktestHistory';
@@ -56,6 +57,7 @@ const App: React.FC = () => {
                     <Route path="/backtest/history" element={<BacktestHistory />} />
                     <Route path="/backtest-history/:id" element={<BacktestHistoryDetail />} />
                     <Route path="/optimization" element={<StrategyOptimization />} />
+                    <Route path="/ai-investment" element={<AiInvestment />} />
                   </Routes>
                 </Content>
               </Layout>

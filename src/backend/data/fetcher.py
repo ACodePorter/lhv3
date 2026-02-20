@@ -10,27 +10,15 @@ from ..config import RAW_DATA_DIR, PROCESSED_DATA_DIR, API_KEYS
 logger = logging.getLogger(__name__)
 
 class DataFetcher:
-    """数据获取器，用于从不同数据源获取市场数据"""
-    
     def __init__(self):
         self.data_sources = {
             "yahoo": self._fetch_from_yahoo,
             "akshare": self._fetch_from_akshare,
             "local": self._fetch_from_local,
+            "futu": self._fetch_from_futu,
         }
     
-    def fetch_data(self, symbol, start_date, end_date=None, data_source="yahoo"):
-        """获取指定股票的历史数据
-        
-        Args:
-            symbol (str): 股票代码
-            start_date (str): 开始日期，格式：YYYY-MM-DD
-            end_date (str, optional): 结束日期，格式：YYYY-MM-DD，默认为今天
-            data_source (str, optional): 数据源，默认为yahoo
-            
-        Returns:
-            pandas.DataFrame: 包含历史数据的DataFrame
-        """
+    def fetch_data(self, symbol, start_date, end_date=None, data_source="yahoo", frequency="1d"):
         if end_date is None:
             end_date = datetime.now().strftime("%Y-%m-%d")
             
@@ -38,14 +26,13 @@ class DataFetcher:
             raise ValueError(f"不支持的数据源: {data_source}")
             
         try:
-            return self.data_sources[data_source](symbol, start_date, end_date)
+            return self.data_sources[data_source](symbol, start_date, end_date, frequency)
         except Exception as e:
             logger.error(f"获取数据失败: {e}")
             raise
     
-    def _fetch_from_yahoo(self, symbol, start_date, end_date):
-        """从Yahoo Finance获取数据"""
-        logger.info(f"尝试获取股票数据: {symbol}, 期间: {start_date} 至 {end_date}")
+    def _fetch_from_yahoo(self, symbol, start_date, end_date, frequency="1d"):
+        logger.info(f"尝试获取股票数据: {symbol}, 期间: {start_date} 至 {end_date}, 周期: {frequency}")
         
         # 1. 首先尝试直接从本地文件加载
         try:
@@ -106,7 +93,10 @@ class DataFetcher:
                 
             logger.info(f"从Yahoo Finance获取数据: {symbol_yahoo}")
             stock = yf.Ticker(symbol_yahoo)
-            data = stock.history(start=start_date, end=end_date)
+            interval = "1d"
+            if frequency in ("1m", "2m", "5m", "15m", "30m", "60m", "90m"):
+                interval = frequency
+            data = stock.history(start=start_date, end=end_date, interval=interval)
             
             # 确保数据格式一致
             if not data.empty:
@@ -127,8 +117,7 @@ class DataFetcher:
         logger.error(f"无法获取股票数据: {symbol}")
         return pd.DataFrame()
     
-    def _fetch_from_akshare(self, symbol, start_date, end_date):
-        """从AKShare获取A股数据"""
+    def _fetch_from_akshare(self, symbol, start_date, end_date, frequency="1d"):
         # 确保A股股票代码格式正确
         if symbol.endswith(".SH") or symbol.endswith(".SZ"):
             symbol_ak = symbol.split(".")[0]
@@ -168,8 +157,7 @@ class DataFetcher:
             logger.error(f"从AKShare获取数据失败: {e}")
             raise
     
-    def _fetch_from_local(self, symbol, start_date, end_date):
-        """从本地文件获取数据"""
+    def _fetch_from_local(self, symbol, start_date, end_date, frequency="1d"):
         logger.info(f"尝试从本地文件获取数据: {symbol}, 期间: {start_date} 至 {end_date}")
         
         try:
@@ -238,6 +226,51 @@ class DataFetcher:
             
         except Exception as e:
             logger.error(f"从本地文件加载数据失败: {str(e)}")
+            return pd.DataFrame()
+    
+    def _fetch_from_futu(self, symbol, start_date, end_date, frequency="1d"):
+        logger.info(f"尝试从富途OpenAPI获取数据: {symbol}, 期间: {start_date} 至 {end_date}, 周期: {frequency}")
+        try:
+            from futu import OpenQuoteContext, KLType
+        except Exception as e:
+            logger.error(f"导入富途OpenAPI SDK失败: {str(e)}")
+            return pd.DataFrame()
+        try:
+            with OpenQuoteContext() as quote_ctx:
+                if frequency == "1m":
+                    kl_type = KLType.K_1M
+                elif frequency == "5m":
+                    kl_type = KLType.K_5M
+                elif frequency == "15m":
+                    kl_type = KLType.K_15M
+                elif frequency == "30m":
+                    kl_type = KLType.K_30M
+                elif frequency == "60m":
+                    kl_type = KLType.K_60M
+                else:
+                    kl_type = KLType.K_DAY
+                ret, data = quote_ctx.get_history_kline(symbol, start=start_date, end=end_date, ktype=kl_type)
+                if ret != 0 or data is None or data.empty:
+                    logger.error(f"从富途OpenAPI获取数据失败: ret={ret}")
+                    return pd.DataFrame()
+                df = data.copy()
+                if "time_key" in df.columns:
+                    df = df.rename(
+                        columns={
+                            "time_key": "date",
+                            "open": "open",
+                            "high": "high",
+                            "low": "low",
+                            "close": "close",
+                            "volume": "volume",
+                        }
+                    )
+                if "date" in df.columns:
+                    df["date"] = pd.to_datetime(df["date"])
+                self._save_raw_data(df, symbol, "futu")
+                return df
+        except Exception as e:
+            logger.error(f"从富途OpenAPI获取数据失败: {str(e)}")
             return pd.DataFrame()
     
     def _save_raw_data(self, data, symbol, source):

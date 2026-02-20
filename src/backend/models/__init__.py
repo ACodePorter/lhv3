@@ -1,5 +1,16 @@
 from .base import Base
-from .strategy import Strategy, StrategySnapshot, Backtest, BacktestStatus, BacktestHistory, Trade
+from .strategy import (
+    Strategy,
+    StrategySnapshot,
+    Backtest,
+    BacktestStatus,
+    BacktestHistory,
+    Trade,
+    AiInvestmentRun,
+    AiInvestmentRecord,
+    AiInvestmentLog,
+    AiPromptSetting,
+)
 from .data_models import Stock, StockData, DataSource, TechnicalIndicator, DailyPrice, get_db, init_db
 from .optimization import (
     StrategyParameterSpace, 
@@ -21,6 +32,10 @@ __all__ = [
     'BacktestStatus',
     'BacktestHistory',
     'Trade',
+    'AiInvestmentRun',
+    'AiInvestmentRecord',
+    'AiInvestmentLog',
+    'AiPromptSetting',
     'StockData',
     'TechnicalIndicator',
     'StrategyParameterSpace',

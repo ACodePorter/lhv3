@@ -154,7 +154,6 @@ class BacktestHistory(Base):
     status_record = relationship("BacktestStatus", back_populates="history_records")
 
 class Trade(Base):
-    """交易记录模型"""
     __tablename__ = "trades"
     
     id = Column(Integer, primary_key=True, index=True)
@@ -165,6 +164,76 @@ class Trade(Base):
     price = Column(Float)
     quantity = Column(Float)
     commission = Column(Float)
-    
-    # 多对一关系：多个交易记录属于一个回测
-    backtest = relationship("Backtest", back_populates="trades") 
+    backtest = relationship("Backtest", back_populates="trades")
+
+
+class AiInvestmentRun(Base):
+    __tablename__ = "ai_investment_runs"
+
+    id = Column(Integer, primary_key=True, index=True)
+    name = Column(String, index=True)
+    symbol = Column(String, index=True)
+    models = Column(JSON)
+    data_source = Column(String, default="yahoo")
+    frequency = Column(String, default="1m")
+    initial_capital = Column(Float, default=100000.0)
+    status = Column(String, default="running")
+    parent_run_id = Column(Integer, ForeignKey("ai_investment_runs.id"), nullable=True, index=True)
+    config = Column(JSON, nullable=True)
+    performance_metrics = Column(JSON, nullable=True)
+    created_at = Column(DateTime, default=datetime.now)
+    updated_at = Column(DateTime, default=datetime.now, onupdate=datetime.now)
+    completed_at = Column(DateTime, nullable=True)
+
+    records = relationship("AiInvestmentRecord", back_populates="run", cascade="all, delete-orphan")
+    logs = relationship("AiInvestmentLog", back_populates="run", cascade="all, delete-orphan")
+
+
+class AiInvestmentRecord(Base):
+    __tablename__ = "ai_investment_records"
+
+    id = Column(Integer, primary_key=True, index=True)
+    run_id = Column(Integer, ForeignKey("ai_investment_runs.id"), index=True)
+    model_type = Column(String, index=True)
+    symbol = Column(String, index=True)
+    timestamp = Column(DateTime, index=True)
+    predicted_price = Column(Float)
+    actual_price = Column(Float)
+    action = Column(String)
+    position = Column(Float)
+    pnl = Column(Float)
+    cumulative_pnl = Column(Float)
+    equity = Column(Float)
+    extra = Column(JSON, nullable=True)
+
+    run = relationship("AiInvestmentRun", back_populates="records")
+
+
+class AiInvestmentLog(Base):
+    __tablename__ = "ai_investment_logs"
+
+    id = Column(Integer, primary_key=True, index=True)
+    run_id = Column(Integer, ForeignKey("ai_investment_runs.id"), index=True)
+    record_id = Column(Integer, ForeignKey("ai_investment_records.id"), nullable=True, index=True)
+    timestamp = Column(DateTime, default=datetime.now, index=True)
+    level = Column(String, index=True)
+    category = Column(String, index=True)
+    message = Column(Text)
+    ai_input_compressed = Column(Text, nullable=True)
+    ai_output_compressed = Column(Text, nullable=True)
+    extra = Column(JSON, nullable=True)
+
+    run = relationship("AiInvestmentRun", back_populates="logs")
+    record = relationship("AiInvestmentRecord")
+
+
+class AiPromptSetting(Base):
+    __tablename__ = "ai_prompt_settings"
+
+    id = Column(Integer, primary_key=True, index=True)
+    model_type = Column(String, index=True)
+    scene = Column(String, nullable=True)
+    system_prompt = Column(Text, nullable=False)
+    description = Column(Text, nullable=True)
+    created_at = Column(DateTime, default=datetime.now)
+    updated_at = Column(DateTime, default=datetime.now, onupdate=datetime.now)

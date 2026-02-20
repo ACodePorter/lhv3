@@ -81,6 +81,10 @@ app.include_router(optimization_router, tags=["参数优化"])
 from .async_routes import router as async_router
 app.include_router(async_router, tags=["异步任务"])
 
+# 注册AI实时投资跑数路由
+from .ai_investment_routes import router as ai_investment_router
+app.include_router(ai_investment_router, prefix="/api", tags=["AI投资"])
+
 
 # 初始化数据库
 @app.on_event("startup")

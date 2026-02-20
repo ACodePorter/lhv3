@@ -1,8 +1,22 @@
 import os
-from sqlalchemy import Column, Integer, String, Float, DateTime, Date, ForeignKey, Text, create_engine, UniqueConstraint
+from datetime import datetime
+
+from sqlalchemy import (
+    Column,
+    Integer,
+    String,
+    Float,
+    DateTime,
+    Date,
+    ForeignKey,
+    Text,
+    create_engine,
+    UniqueConstraint,
+    inspect,
+    text,
+)
 from sqlalchemy.ext.declarative import declarative_base
 from sqlalchemy.orm import relationship, sessionmaker
-from datetime import datetime
 
 # 创建Base类
 Base = declarative_base()
@@ -148,10 +162,36 @@ def get_db():
 
 def init_db(db_url=None):
     """初始化数据库，创建所有表"""
-    # 导入所有模型以确保它们被注册到Base.metadata中
-    from . import strategy  # 导入策略相关模型
-    from . import optimization  # 导入优化相关模型
+    # 导入所有模型以确保它们被注册到对应的 Base.metadata 中
+    from . import strategy  # 导入策略相关模型（使用 .base.Base）
+    from . import optimization  # 导入优化相关模型（使用 .base.Base）
+    from .base import Base as CoreBase  # 回测/策略等核心模型
     
     engine = get_engine(db_url)
+    
+    # 1. 创建当前文件中定义的数据相关表（DataSource / Stock / StockData / TechnicalIndicator / DailyPrice）
     Base.metadata.create_all(engine)
+    # 2. 创建核心回测与AI投资相关表（Strategy / Backtest / AiInvestmentRun / AiInvestmentRecord 等）
+    CoreBase.metadata.create_all(engine)
+
+    try:
+        inspector = inspect(engine)
+        tables = inspector.get_table_names()
+        if "ai_investment_runs" in tables:
+            columns = [col["name"] for col in inspector.get_columns("ai_investment_runs")]
+            if "parent_run_id" not in columns:
+                with engine.begin() as conn:
+                    conn.execute(
+                        text(
+                            "ALTER TABLE ai_investment_runs ADD COLUMN parent_run_id INTEGER"
+                        )
+                    )
+                    conn.execute(
+                        text(
+                            "CREATE INDEX IF NOT EXISTS ix_ai_investment_runs_parent_run_id ON ai_investment_runs (parent_run_id)"
+                        )
+                    )
+    except Exception:
+        pass
+
     return engine 
