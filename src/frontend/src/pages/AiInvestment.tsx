@@ -1,5 +1,5 @@
 import React, { useEffect, useMemo, useState } from 'react';
-import { Card, Row, Col, Form, Input, DatePicker, Select, Button, Space, Tag, Table, Statistic, message, Modal, Typography } from 'antd';
+import { Card, Row, Col, Form, Input, DatePicker, Select, Button, Space, Tag, Table, message, Modal, Typography } from 'antd';
 import { LineChartOutlined, PlayCircleOutlined, FileTextOutlined, StepForwardOutlined } from '@ant-design/icons';
 import type { ColumnsType } from 'antd/es/table';
 import dayjs from 'dayjs';
@@ -65,6 +65,13 @@ interface MetricsMap {
     max_drawdown: number;
     sharpe_ratio: number;
   };
+}
+
+interface MetricsRow {
+  model: string;
+  total_return: number;
+  max_drawdown: number;
+  sharpe_ratio: number;
 }
 
 interface EquityPoint {
@@ -293,10 +300,13 @@ const AiInvestment: React.FC = () => {
   }, []);
 
   useEffect(() => {
-    if (dataSourceValue === 'database') {
-      form.setFieldsValue({ frequency: '1d' });
-    } else {
-      form.setFieldsValue({ frequency: '1m' });
+    const currentFrequency = form.getFieldValue('frequency');
+    if (!currentFrequency) {
+      if (dataSourceValue === 'database') {
+        form.setFieldsValue({ frequency: '1d' });
+      } else {
+        form.setFieldsValue({ frequency: '1m' });
+      }
     }
   }, [dataSourceValue, form]);
 
@@ -494,6 +504,47 @@ const AiInvestment: React.FC = () => {
         setMetrics(data.metrics || {});
         setEquityCurves(data.equity_curves || {});
         setPriceSeries(data.price_series || []);
+
+        const config = data.config || {};
+        const startTime = config.start_time;
+        const endTime = config.end_time;
+        const timeRange =
+          startTime && endTime ? [dayjs(startTime), dayjs(endTime)] : undefined;
+
+        const formValues: any = {
+          name: data.name || run.name,
+          symbol: data.symbol || run.symbol,
+          data_source: data.data_source,
+          frequency: data.frequency,
+          models:
+            Array.isArray(data.models) && data.models.length > 0
+              ? data.models
+              : run.models,
+          initial_capital: data.initial_capital,
+          buy_threshold: config.buy_threshold,
+          sell_threshold: config.sell_threshold,
+          stop_loss_pct: config.stop_loss_pct,
+          take_profit_pct: config.take_profit_pct,
+          window: config.window,
+          commission_rate: config.commission_rate,
+          slippage_rate: config.slippage_rate,
+        };
+
+        if (timeRange) {
+          formValues.timeRange = timeRange;
+        }
+
+        Object.keys(formValues).forEach(key => {
+          const value = formValues[key];
+          if (value === undefined || value === null) {
+            delete formValues[key];
+          }
+        });
+
+        if (Object.keys(formValues).length > 0) {
+          form.setFieldsValue(formValues);
+        }
+
         await fetchRecords(run);
         message.success('已载入历史运行结果');
       } else {
@@ -757,7 +808,7 @@ const AiInvestment: React.FC = () => {
     return {
       tooltip: { trigger: 'axis' },
       legend: { top: 0 },
-      grid: { left: 50, right: 30, top: 40, bottom: 50 },
+      grid: { left: 50, right: 30, top: 40, bottom: 80 },
       xAxis: {
         type: 'category',
         data: dates,
@@ -767,6 +818,20 @@ const AiInvestment: React.FC = () => {
         scale: true,
         name: '账户权益',
       },
+      dataZoom: [
+        {
+          type: 'inside',
+          start: 0,
+          end: 100,
+        },
+        {
+          show: true,
+          type: 'slider',
+          bottom: 20,
+          start: 0,
+          end: 100,
+        },
+      ],
       series,
     };
   }, [equityCurves]);
@@ -791,12 +856,20 @@ const AiInvestment: React.FC = () => {
 
     if (baseDates.length === 0) {
       return {
-        tooltip: { trigger: 'axis' },
+        tooltip: {
+          trigger: 'axis',
+          axisPointer: {
+            type: 'cross',
+            label: {
+              backgroundColor: '#555',
+            },
+          },
+        },
         legend: {
           top: 0,
           data: [],
         },
-        grid: { left: 50, right: 30, top: 40, bottom: 50 },
+        grid: { left: 50, right: 30, top: 40, bottom: 80 },
         xAxis: {
           type: 'category',
           data: [],
@@ -806,6 +879,20 @@ const AiInvestment: React.FC = () => {
           scale: true,
           name: '价格',
         },
+        dataZoom: [
+          {
+            type: 'inside',
+            start: 0,
+            end: 100,
+          },
+          {
+            show: true,
+            type: 'slider',
+            bottom: 20,
+            start: 0,
+            end: 100,
+          },
+        ],
         series: [],
       };
     }
@@ -852,6 +939,102 @@ const AiInvestment: React.FC = () => {
       });
     });
 
+    const dateIndexMap = new Map<string, number>();
+    baseDates.forEach((d, index) => {
+      dateIndexMap.set(d, index);
+    });
+
+    const buyPoints: { index: number; price: number }[] = [];
+    const sellPoints: { index: number; price: number }[] = [];
+
+    records.forEach(r => {
+      const key = dayjs(r.timestamp).format(dateFormat);
+      const index = dateIndexMap.get(key);
+      if (index === undefined) {
+        return;
+      }
+      const price = r.actual_price ?? actualMap.get(key) ?? null;
+      if (price == null) {
+        return;
+      }
+      if (r.action === 'BUY') {
+        buyPoints.push({ index, price });
+      } else if (r.action === 'SELL') {
+        sellPoints.push({ index, price });
+      }
+    });
+
+    const buyCirclePoints = buyPoints.map(p => ({
+      name: '买入点',
+      coord: [baseDates[p.index], p.price],
+      value: p.price,
+      itemStyle: {
+        color: '#f64034',
+      },
+      symbol: 'circle',
+      symbolSize: 8,
+      label: {
+        show: false,
+      },
+    }));
+
+    const sellCirclePoints = sellPoints.map(p => ({
+      name: '卖出点',
+      coord: [baseDates[p.index], p.price],
+      value: p.price,
+      itemStyle: {
+        color: '#00b46a',
+      },
+      symbol: 'circle',
+      symbolSize: 8,
+      label: {
+        show: false,
+      },
+    }));
+
+    const buyLabelPoints = buyPoints.map(p => ({
+      name: '买入',
+      coord: [baseDates[p.index], p.price * 1.02],
+      itemStyle: {
+        color: '#f64034',
+      },
+      symbol: 'pin',
+      symbolSize: 22,
+      label: {
+        show: true,
+        formatter: 'B',
+        color: '#ffffff',
+        position: 'inside',
+        fontSize: 12,
+        fontWeight: 'bold',
+      },
+    }));
+
+    const sellLabelPoints = sellPoints.map(p => ({
+      name: '卖出',
+      coord: [baseDates[p.index], p.price * 0.98],
+      itemStyle: {
+        color: '#00b46a',
+      },
+      symbol: 'pin',
+      symbolSize: 22,
+      label: {
+        show: true,
+        formatter: 'S',
+        color: '#ffffff',
+        position: 'inside',
+        fontSize: 12,
+        fontWeight: 'bold',
+      },
+    }));
+
+    const markPointData = [
+      ...buyCirclePoints,
+      ...sellCirclePoints,
+      ...buyLabelPoints,
+      ...sellLabelPoints,
+    ];
+
     const series: any[] = [
       {
         type: 'line',
@@ -864,17 +1047,28 @@ const AiInvestment: React.FC = () => {
         itemStyle: {
           color: '#666666',
         },
+        markPoint: {
+          data: markPointData,
+        },
       },
       ...predictedSeries,
     ];
 
     return {
-      tooltip: { trigger: 'axis' },
+      tooltip: {
+        trigger: 'axis',
+        axisPointer: {
+          type: 'cross',
+          label: {
+            backgroundColor: '#555',
+          },
+        },
+      },
       legend: {
         top: 0,
         data: series.map(s => s.name),
       },
-      grid: { left: 50, right: 30, top: 40, bottom: 50 },
+      grid: { left: 50, right: 30, top: 40, bottom: 80 },
       xAxis: {
         type: 'category',
         data: baseDates,
@@ -884,38 +1078,64 @@ const AiInvestment: React.FC = () => {
         scale: true,
         name: '价格',
       },
+      dataZoom: [
+        {
+          type: 'inside',
+          start: 0,
+          end: 100,
+        },
+        {
+          show: true,
+          type: 'slider',
+          bottom: 20,
+          start: 0,
+          end: 100,
+        },
+      ],
       series,
     };
   }, [priceSeries, records, modelOrder]);
 
-  const metricsCards = useMemo(() => {
-    const items: JSX.Element[] = [];
-    Object.keys(metrics || {}).forEach(model => {
+  const metricsData = useMemo<MetricsRow[]>(() => {
+    if (!metrics) {
+      return [];
+    }
+    return Object.keys(metrics).map(model => {
       const m = metrics[model];
-      items.push(
-        <Card size="small" title={model} key={model}>
-          <Statistic
-            title="总收益率"
-            value={m.total_return * 100}
-            precision={2}
-            suffix="%"
-          />
-          <Statistic
-            title="最大回撤"
-            value={m.max_drawdown * 100}
-            precision={2}
-            suffix="%"
-          />
-          <Statistic
-            title="夏普比率"
-            value={m.sharpe_ratio}
-            precision={2}
-          />
-        </Card>
-      );
+      return {
+        model,
+        total_return: m?.total_return ?? 0,
+        max_drawdown: m?.max_drawdown ?? 0,
+        sharpe_ratio: m?.sharpe_ratio ?? 0,
+      };
     });
-    return items;
   }, [metrics]);
+
+  const metricsColumns: ColumnsType<MetricsRow> = [
+    {
+      title: '模型',
+      dataIndex: 'model',
+      key: 'model',
+    },
+    {
+      title: '总收益率',
+      dataIndex: 'total_return',
+      key: 'total_return',
+      render: (v: number) => `${(v * 100).toFixed(2)} %`,
+    },
+    {
+      title: '最大回撤',
+      dataIndex: 'max_drawdown',
+      key: 'max_drawdown',
+      render: (v: number) => `${(v * 100).toFixed(2)} %`,
+    },
+    {
+      title: '夏普比率',
+      dataIndex: 'sharpe_ratio',
+      key: 'sharpe_ratio',
+      render: (v: number) => v.toFixed(2),
+    },
+  ];
 
   return (
     <div>
@@ -1188,6 +1408,49 @@ const AiInvestment: React.FC = () => {
       </Row>
 
       <Row gutter={16} style={{ marginTop: 16 }}>
+        <Col span={12}>
+          <Card title="价格与模型预测（含买卖点）">
+            <OptimizedChart option={priceChartOption} style={{ height: 540 }} />
+          </Card>
+        </Col>
+        <Col span={12}>
+          <Card title="账户权益曲线">
+            <OptimizedChart option={equityChartOption} style={{ height: 540 }} />
+          </Card>
+        </Col>
+      </Row>
+
+      <Row gutter={16} style={{ marginTop: 16 }}>
+        <Col span={24}>
+          <Card title="预测明细">
+            <Table
+              rowKey={(r, index) => `${r.model_type}-${r.timestamp}-${index}`}
+              loading={recordsLoading}
+              dataSource={records}
+              columns={recordColumns}
+              size="small"
+              pagination={{ pageSize: 10 }}
+              scroll={{ x: 1200 }}
+            />
+          </Card>
+        </Col>
+      </Row>
+
+      <Row gutter={16} style={{ marginTop: 16 }}>
+        <Col span={24}>
+          <Card title="模型绩效对比">
+            <Table
+              rowKey="model"
+              dataSource={metricsData}
+              columns={metricsColumns}
+              size="small"
+              pagination={false}
+            />
+          </Card>
+        </Col>
+      </Row>
+
+      <Row gutter={16} style={{ marginTop: 16 }}>
         <Col span={24}>
           <Card title="AI提示词设置">
             <Row gutter={16}>
@@ -1233,50 +1496,6 @@ const AiInvestment: React.FC = () => {
                 </Space>
               </Col>
             </Row>
-          </Card>
-        </Col>
-      </Row>
-
-      <Row gutter={16} style={{ marginTop: 16 }}>
-        <Col span={12}>
-          <Card title="价格与模型预测（含买卖点）">
-            <OptimizedChart option={priceChartOption} style={{ height: 540 }} />
-          </Card>
-        </Col>
-        <Col span={12}>
-          <Card title="账户权益曲线与模型绩效对比">
-            <Row gutter={16} align="top">
-              <Col span={18}>
-                <div style={{ marginBottom: 8 }}>
-                  <Text strong>账户权益曲线</Text>
-                </div>
-                <OptimizedChart option={equityChartOption} style={{ height: 260 }} />
-              </Col>
-              <Col span={6}>
-                <div style={{ marginBottom: 8 }}>
-                  <Text strong>模型绩效对比</Text>
-                </div>
-                <Space direction="vertical" style={{ width: '100%' }} size={12}>
-                  {metricsCards}
-                </Space>
-              </Col>
-            </Row>
-          </Card>
-        </Col>
-      </Row>
-
-      <Row gutter={16} style={{ marginTop: 16 }}>
-        <Col span={24}>
-          <Card title="预测明细">
-            <Table
-              rowKey={(r, index) => `${r.model_type}-${r.timestamp}-${index}`}
-              loading={recordsLoading}
-              dataSource={records}
-              columns={recordColumns}
-              size="small"
-              pagination={{ pageSize: 10 }}
-              scroll={{ x: 1200 }}
-            />
           </Card>
         </Col>
       </Row>

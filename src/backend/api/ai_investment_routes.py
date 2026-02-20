@@ -91,6 +91,13 @@ class AiRunResponse(BaseModel):
     metrics: Dict[str, Dict[str, float]]
     equity_curves: Dict[str, List[Dict[str, Any]]]
     price_series: List[Dict[str, Any]]
+    name: Optional[str] = None
+    symbol: Optional[str] = None
+    data_source: Optional[str] = None
+    frequency: Optional[str] = None
+    models: List[str] = []
+    initial_capital: Optional[float] = None
+    config: Optional[Dict[str, Any]] = None
 
 
 class AiRunResumeRequest(BaseModel):
@@ -552,22 +559,30 @@ def _perform_ai_run(
                 }
             )
 
-    if run_status == "completed":
-        return AiRunResponse(
-            status="success",
-            message="AI投资回放完成",
-            run_id=run.id,
-            metrics=result.get("metrics", {}),
-            equity_curves=result.get("equity_curves", {}),
-            price_series=price_series,
-        )
-    return AiRunResponse(
-        status="failed",
-        message=f"AI投资回放失败: {error_message or '未知错误'}",
+    response_common = dict(
         run_id=run.id,
         metrics=result.get("metrics", {}),
         equity_curves=result.get("equity_curves", {}),
         price_series=price_series,
+        name=run.name,
+        symbol=run.symbol,
+        data_source=run.data_source,
+        frequency=run.frequency,
+        models=request.models,
+        initial_capital=request.initial_capital,
+        config=run.config,
+    )
+
+    if run_status == "completed":
+        return AiRunResponse(
+            status="success",
+            message="AI投资回放完成",
+            **response_common,
+        )
+    return AiRunResponse(
+        status="failed",
+        message=f"AI投资回放失败: {error_message or '未知错误'}",
+        **response_common,
     )
 
 
@@ -723,6 +738,10 @@ def get_ai_run_detail(run_id: int, db: Session = Depends(get_db)):
     if isinstance(run.performance_metrics, dict):
         metrics = run.performance_metrics
 
+    models: List[str] = []
+    if isinstance(run.models, list):
+        models = run.models
+
     records = (
         db.query(AiInvestmentRecord)
         .filter(AiInvestmentRecord.run_id == run.id)
@@ -755,6 +774,13 @@ def get_ai_run_detail(run_id: int, db: Session = Depends(get_db)):
         metrics=metrics,
         equity_curves=equity_curves,
         price_series=price_series,
+        name=run.name,
+        symbol=run.symbol,
+        data_source=run.data_source,
+        frequency=run.frequency,
+        models=models,
+        initial_capital=run.initial_capital,
+        config=run.config or {},
     )
 
 
