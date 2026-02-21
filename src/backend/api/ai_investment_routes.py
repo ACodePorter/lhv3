@@ -478,6 +478,12 @@ def _perform_ai_run(
     engine_window = int(request.window)
     if engine_window <= 1:
         engine_window = 2
+    data_length = len(data)
+    if data_length <= engine_window + 1:
+        candidate = data_length - 2
+        if candidate < 2:
+            candidate = 2
+        engine_window = candidate
 
     engine_config: Dict[str, Any] = {
         "buy_threshold": request.buy_threshold,
@@ -688,6 +694,7 @@ def list_ai_runs(db: Session = Depends(get_db)):
 
 class AiRecordItem(BaseModel):
     id: int
+    run_id: int
     model_type: str
     timestamp: datetime
     predicted_price: float
@@ -713,6 +720,7 @@ def get_ai_run_records(run_id: int, db: Session = Depends(get_db)):
         items.append(
             AiRecordItem(
                 id=rec.id,
+                run_id=rec.run_id,
                 model_type=rec.model_type,
                 timestamp=rec.timestamp,
                 predicted_price=rec.predicted_price or 0.0,
@@ -864,7 +872,7 @@ def resume_ai_run(
     if not start_time:
         raise HTTPException(status_code=400, detail="原始运行缺少起始时间，无法续跑")
 
-    end_time = request.end_time or config.get("end_time")
+    end_time = request.end_time
 
     models: List[str] = []
     if isinstance(base_run.models, list):
