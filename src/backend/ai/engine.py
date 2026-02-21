@@ -1,6 +1,7 @@
 from typing import Any, Dict, List, Tuple, Optional
 
 import logging
+from datetime import datetime
 import numpy as np
 import pandas as pd
 
@@ -17,11 +18,13 @@ class AiInvestmentEngine:
         models: Dict[str, AIModel],
         initial_capital: float = 100000.0,
         config: Optional[Dict[str, Any]] = None,
+        resume_from: Optional[datetime] = None,
     ):
         self.data = data.copy()
         self.models = models
         self.initial_capital = initial_capital
         self.config = config or {}
+        self.resume_from = resume_from
 
     def run(self) -> Dict[str, Any]:
         if self.data is None or self.data.empty:
@@ -89,6 +92,10 @@ class AiInvestmentEngine:
             current_price = float(current_row["close"])
             next_price = float(next_row["close"])
             timestamp = next_row["date"] if "date" in next_row else None
+
+            if self.resume_from is not None and timestamp is not None:
+                if timestamp <= self.resume_from:
+                    continue
 
             logger.debug(
                 "时间步: idx=%d, 时间=%s, 当前价=%.6f, 下一根价=%.6f",

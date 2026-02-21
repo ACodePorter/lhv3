@@ -129,85 +129,6 @@ const DEFAULT_SYSTEM_PROMPT = [
   '6）如果历史数据较少，也要给出尽可能稳健的预测，而不是报错。',
 ].join('\n');
 
-const calculateMaxDrawdown = (equities: number[]): number => {
-  if (!equities || equities.length === 0) {
-    return 0;
-  }
-  let peak = equities[0];
-  let maxDrawdown = 0;
-  for (let i = 0; i < equities.length; i += 1) {
-    const value = equities[i];
-    if (value > peak) {
-      peak = value;
-    }
-    if (peak > 0) {
-      const drawdown = (value - peak) / peak;
-      if (drawdown < maxDrawdown) {
-        maxDrawdown = drawdown;
-      }
-    }
-  }
-  return maxDrawdown;
-};
-
-const calculateSharpeRatio = (equities: number[]): number => {
-  if (!equities || equities.length < 2) {
-    return 0;
-  }
-  const returns: number[] = [];
-  for (let i = 1; i < equities.length; i += 1) {
-    const prev = equities[i - 1];
-    const curr = equities[i];
-    if (prev !== 0) {
-      returns.push((curr - prev) / prev);
-    }
-  }
-  if (returns.length === 0) {
-    return 0;
-  }
-  const mean = returns.reduce((sum, v) => sum + v, 0) / returns.length;
-  let variance = 0;
-  for (let i = 0; i < returns.length; i += 1) {
-    const diff = returns[i] - mean;
-    variance += diff * diff;
-  }
-  variance /= returns.length;
-  const std = Math.sqrt(variance);
-  if (std === 0) {
-    return 0;
-  }
-  const scale = Math.sqrt(returns.length);
-  return (mean / std) * scale;
-};
-
-const buildMetricsFromEquityCurves = (equityCurves: EquityCurvesMap): MetricsMap => {
-  const result: MetricsMap = {};
-  const models = Object.keys(equityCurves || {});
-  models.forEach(model => {
-    const curve = equityCurves[model] || [];
-    const equities = curve.map(p => p.equity);
-    if (!equities.length) {
-      result[model] = {
-        total_return: 0,
-        max_drawdown: 0,
-        sharpe_ratio: 0,
-      };
-      return;
-    }
-    const first = equities[0];
-    const last = equities[equities.length - 1];
-    const totalReturn = first > 0 ? last / first - 1 : 0;
-    const maxDrawdown = calculateMaxDrawdown(equities);
-    const sharpeRatio = calculateSharpeRatio(equities);
-    result[model] = {
-      total_return: totalReturn,
-      max_drawdown: maxDrawdown,
-      sharpe_ratio: sharpeRatio,
-    };
-  });
-  return result;
-};
-
 const AiInvestment: React.FC = () => {
   const [form] = Form.useForm();
   const [runs, setRuns] = useState<AiRun[]>([]);
@@ -240,6 +161,7 @@ const AiInvestment: React.FC = () => {
   const [selectedRecord, setSelectedRecord] = useState<AiRecord | null>(null);
   const [estimatingCalls, setEstimatingCalls] = useState(false);
   const [callEstimateText, setCallEstimateText] = useState<string>('');
+  const [resumingRunId, setResumingRunId] = useState<number | null>(null);
 
   const dataSourceValue = Form.useWatch('data_source', form) || 'database';
 
@@ -291,7 +213,9 @@ const AiInvestment: React.FC = () => {
     setRecordsLoading(true);
     try {
       const res = await axios.get<AiRecord[]>(`/api/ai-investment/run/${runId}/records`);
-      setRecords(res.data || []);
+      const list = res.data || [];
+      setRecords(list);
+      return list;
     } catch (error: any) {
       message.error(error?.message || '获取AI投资预测明细失败');
     } finally {
@@ -565,104 +489,82 @@ const AiInvestment: React.FC = () => {
   };
 
   const handleResumeRun = async (run: AiRun) => {
+    let estimateData: any | null = null;
     try {
-      const res = await axios.post<AiRunDetailResponse>(
-        `/api/ai-investment/run/${run.id}/resume`,
-        {
-          name: `${run.name}-续跑`,
-        },
+      const estimateRes = await axios.post(
+        `/api/ai-investment/run/${run.id}/estimate-calls-resume`,
+        {},
       );
-      const data = res.data;
-      if (data && data.status === 'success') {
-        message.success('续跑任务已完成');
-        const newRunId = data.run_id;
-        const parentRunId = run.id;
-        const [
-          parentDetailRes,
-          childDetailRes,
-          parentRecordsRes,
-          childRecordsRes,
-          list,
-        ] = await Promise.all([
-          axios.get<AiRunDetailResponse>(`/api/ai-investment/run/${parentRunId}`),
-          axios.get<AiRunDetailResponse>(`/api/ai-investment/run/${newRunId}`),
-          axios.get<AiRecord[]>(`/api/ai-investment/run/${parentRunId}/records`),
-          axios.get<AiRecord[]>(`/api/ai-investment/run/${newRunId}/records`),
-          fetchRuns(),
-        ]);
-        const parentDetail = parentDetailRes.data;
-        const childDetail = childDetailRes.data;
-        const parentEquityCurves = parentDetail.equity_curves || {};
-        const childEquityCurves = childDetail.equity_curves || {};
-        const mergedEquityCurves: EquityCurvesMap = {};
-        const allModels = new Set<string>([
-          ...Object.keys(parentEquityCurves),
-          ...Object.keys(childEquityCurves),
-        ]);
-        allModels.forEach(model => {
-          const parentPoints = parentEquityCurves[model] || [];
-          const childPoints = childEquityCurves[model] || [];
-          if (!parentPoints.length) {
-            mergedEquityCurves[model] = childPoints;
-          } else if (!childPoints.length) {
-            mergedEquityCurves[model] = parentPoints;
-          } else {
-            const lastParentDate = dayjs(
-              parentPoints[parentPoints.length - 1].date,
-            );
-            const filteredChild = childPoints.filter(p =>
-              dayjs(p.date).isAfter(lastParentDate),
-            );
-            mergedEquityCurves[model] = [...parentPoints, ...filteredChild];
-          }
-        });
-        const parentPriceSeries = parentDetail.price_series || [];
-        const childPriceSeries = childDetail.price_series || [];
-        let mergedPriceSeries: PricePoint[] = [];
-        if (!parentPriceSeries.length) {
-          mergedPriceSeries = childPriceSeries;
-        } else if (!childPriceSeries.length) {
-          mergedPriceSeries = parentPriceSeries;
-        } else {
-          const lastParentDate = dayjs(
-            parentPriceSeries[parentPriceSeries.length - 1].date,
-          );
-          const filteredChild = childPriceSeries.filter(p =>
-            dayjs(p.date).isAfter(lastParentDate),
-          );
-          mergedPriceSeries = [...parentPriceSeries, ...filteredChild];
-        }
-        const parentRecords = parentRecordsRes.data || [];
-        const childRecords = childRecordsRes.data || [];
-        let mergedRecords: AiRecord[] = [];
-        if (!parentRecords.length) {
-          mergedRecords = childRecords;
-        } else if (!childRecords.length) {
-          mergedRecords = parentRecords;
-        } else {
-          const lastParentDate = dayjs(
-            parentRecords[parentRecords.length - 1].timestamp,
-          );
-          const filteredChild = childRecords.filter(r =>
-            dayjs(r.timestamp).isAfter(lastParentDate),
-          );
-          mergedRecords = [...parentRecords, ...filteredChild];
-        }
-        const mergedMetrics = buildMetricsFromEquityCurves(mergedEquityCurves);
-        setMetrics(mergedMetrics);
-        setEquityCurves(mergedEquityCurves);
-        setPriceSeries(mergedPriceSeries);
-        setRecords(mergedRecords);
-        if (list && Array.isArray(list)) {
-          const latestRun = list.find(item => item.id === newRunId) || null;
-          setSelectedRun(latestRun);
-        }
-      } else {
-        message.error(data?.message || '续跑任务执行失败');
-      }
-    } catch (error: any) {
-      message.error(error?.message || '续跑任务请求失败');
+      estimateData = estimateRes.data;
+    } catch (e) {
     }
+
+    Modal.confirm({
+      title: '确认继续运行？',
+      content: (
+        <div>
+          {estimateData ? (
+            estimateData.total_calls > 0 ? (
+              <>
+                <p>
+                  按当前配置，理论最大 AI 调用次数约为{' '}
+                  <Text strong>{estimateData.total_calls}</Text> 次。
+                </p>
+                <p>
+                  每个模型约 <Text strong>{estimateData.per_model_calls}</Text> 次，当前选择{' '}
+                  <Text strong>{estimateData.model_count}</Text> 个模型。
+                </p>
+              </>
+            ) : (
+              <p>根据当前数据，续跑已无剩余预测步数。</p>
+            )
+          ) : (
+            <p>暂时无法预估本次继续运行的 AI 调用次数。</p>
+          )}
+          <p>确定要继续运行该任务吗？</p>
+        </div>
+      ),
+      onOk: async () => {
+        setResumingRunId(run.id);
+        try {
+          const res = await axios.post<AiRunDetailResponse>(
+            `/api/ai-investment/run/${run.id}/resume`,
+            {
+              name: `${run.name}-续跑`,
+            },
+          );
+          const data = res.data;
+          if (data && data.status === 'success') {
+            message.success('续跑任务已完成');
+
+            const detailRes = await axios.get<AiRunDetailResponse>(
+              `/api/ai-investment/run/${run.id}`,
+            );
+            const detail = detailRes.data;
+
+            setSelectedRun({
+              ...run,
+              name: detail.name || run.name,
+            });
+            setMetrics(detail.metrics || {});
+            setEquityCurves(detail.equity_curves || {});
+            setPriceSeries(detail.price_series || []);
+
+            await fetchRecords(run);
+            const list = await fetchRuns();
+            if (list && Array.isArray(list)) {
+              setRuns(list);
+            }
+          } else {
+            message.error(data?.message || '续跑任务执行失败');
+          }
+        } catch (error: any) {
+          message.error(error?.message || '续跑任务请求失败');
+        } finally {
+          setResumingRunId(null);
+        }
+      },
+    });
   };
 
   const handleLoadRun = async (run: AiRun) => {
@@ -676,8 +578,26 @@ const AiInvestment: React.FC = () => {
         setPriceSeries(data.price_series || []);
 
         const config = data.config || {};
-        const startTime = config.start_time;
-        const endTime = config.end_time;
+        const startTime = config.start_time as string | undefined;
+
+        const recordsList = await fetchRecordsByRunId(run.id);
+
+        let endTime = config.end_time as string | undefined;
+        if (recordsList && recordsList.length > 0) {
+          const latestRecordTime = recordsList[recordsList.length - 1].timestamp;
+          if (!endTime || dayjs(endTime).isBefore(latestRecordTime)) {
+            endTime = latestRecordTime;
+          }
+        }
+        if (!endTime) {
+          const priceSeriesList = data.price_series || [];
+          if (priceSeriesList.length > 0) {
+            endTime = priceSeriesList[priceSeriesList.length - 1].date;
+          }
+        }
+        if (!endTime && run.completed_at) {
+          endTime = run.completed_at;
+        }
         const timeRange =
           startTime && endTime ? [dayjs(startTime), dayjs(endTime)] : undefined;
 
@@ -714,8 +634,6 @@ const AiInvestment: React.FC = () => {
         if (Object.keys(formValues).length > 0) {
           form.setFieldsValue(formValues);
         }
-
-        await fetchRecords(run);
         message.success('已载入历史运行结果');
       } else {
         message.error(data?.message || '载入历史运行结果失败');
@@ -836,6 +754,7 @@ const AiInvestment: React.FC = () => {
           <Button
             size="small"
             icon={<StepForwardOutlined />}
+            loading={resumingRunId === record.id}
             onClick={e => {
               e.stopPropagation();
               handleResumeRun(record);

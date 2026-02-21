@@ -7,6 +7,7 @@ import logging
 import threading
 import zlib
 
+import pandas as pd
 from fastapi import APIRouter, Depends, HTTPException, Query
 from pydantic import BaseModel
 from sqlalchemy.orm import Session
@@ -102,6 +103,10 @@ class AiRunResponse(BaseModel):
 
 class AiRunResumeRequest(BaseModel):
     name: Optional[str] = None
+    end_time: Optional[str] = None
+
+
+class AiRunResumeEstimateRequest(BaseModel):
     end_time: Optional[str] = None
 
 
@@ -395,6 +400,8 @@ def _perform_ai_run(
     request: AiRunRequest,
     db: Session,
     parent_run_id: Optional[int] = None,
+    base_run: Optional[AiInvestmentRun] = None,
+    resume_from: Optional[datetime] = None,
 ) -> AiRunResponse:
     if not request.models:
         raise HTTPException(status_code=400, detail="至少需要选择一个模型")
@@ -428,36 +435,41 @@ def _perform_ai_run(
     if data is None or data.empty:
         raise HTTPException(status_code=400, detail="无法获取指定条件的K线数据")
 
-    run_name = request.name or f"AI投资-{request.symbol}-{datetime.now().strftime('%Y%m%d%H%M%S')}"
-
-    run = AiInvestmentRun(
-        name=run_name,
-        symbol=request.symbol,
-        models=request.models,
-        data_source=request.data_source,
-        frequency=request.frequency,
-        initial_capital=request.initial_capital,
-        status="running",
-        parent_run_id=parent_run_id,
-        config={
-            "start_time": request.start_time,
-            "end_time": request.end_time,
-            "buy_threshold": request.buy_threshold,
-            "sell_threshold": request.sell_threshold,
-            "stop_loss_pct": request.stop_loss_pct,
-            "take_profit_pct": request.take_profit_pct,
-            "window": request.window,
-            "commission_rate": request.commission_rate,
-            "slippage_rate": request.slippage_rate,
-        },
-        performance_metrics={},
-        created_at=datetime.now(),
-        updated_at=datetime.now(),
-        completed_at=None,
-    )
-
-    db.add(run)
-    db.flush()
+    if base_run is None:
+        run_name = request.name or f"AI投资-{request.symbol}-{datetime.now().strftime('%Y%m%d%H%M%S')}"
+        run = AiInvestmentRun(
+            name=run_name,
+            symbol=request.symbol,
+            models=request.models,
+            data_source=request.data_source,
+            frequency=request.frequency,
+            initial_capital=request.initial_capital,
+            status="running",
+            parent_run_id=parent_run_id,
+            config={
+                "start_time": request.start_time,
+                "end_time": request.end_time,
+                "buy_threshold": request.buy_threshold,
+                "sell_threshold": request.sell_threshold,
+                "stop_loss_pct": request.stop_loss_pct,
+                "take_profit_pct": request.take_profit_pct,
+                "window": request.window,
+                "commission_rate": request.commission_rate,
+                "slippage_rate": request.slippage_rate,
+            },
+            performance_metrics={},
+            created_at=datetime.now(),
+            updated_at=datetime.now(),
+            completed_at=None,
+        )
+        db.add(run)
+        db.flush()
+    else:
+        run = base_run
+        config = run.config or {}
+        config["end_time"] = request.end_time
+        run.config = config
+        run.updated_at = datetime.now()
 
     model_instances: Dict[str, Any] = {}
     for model_name in request.models:
@@ -478,12 +490,6 @@ def _perform_ai_run(
     engine_window = int(request.window)
     if engine_window <= 1:
         engine_window = 2
-    data_length = len(data)
-    if data_length <= engine_window + 1:
-        candidate = data_length - 2
-        if candidate < 2:
-            candidate = 2
-        engine_window = candidate
 
     engine_config: Dict[str, Any] = {
         "buy_threshold": request.buy_threshold,
@@ -498,6 +504,7 @@ def _perform_ai_run(
         models=model_instances,
         initial_capital=request.initial_capital,
         config=engine_config,
+        resume_from=resume_from,
     )
 
     result: Dict[str, Any] = {}
@@ -594,7 +601,7 @@ def _perform_ai_run(
 
 @router.post("/ai-investment/run", response_model=AiRunResponse)
 def run_ai_investment(request: AiRunRequest, db: Session = Depends(get_db)):
-    return _perform_ai_run(request, db, parent_run_id=None)
+    return _perform_ai_run(request, db, parent_run_id=None, base_run=None, resume_from=None)
 
 
 @router.post("/ai-investment/estimate-calls", response_model=AiCallEstimateResponse)
@@ -656,6 +663,123 @@ def estimate_ai_calls(request: AiRunRequest, db: Session = Depends(get_db)):
     )
 
 
+@router.post(
+    "/ai-investment/run/{run_id}/estimate-calls-resume",
+    response_model=AiCallEstimateResponse,
+)
+def estimate_ai_calls_resume(
+    run_id: int,
+    request: AiRunResumeEstimateRequest,
+    db: Session = Depends(get_db),
+):
+    base_run = db.query(AiInvestmentRun).filter(AiInvestmentRun.id == run_id).first()
+    if base_run is None:
+        raise HTTPException(status_code=404, detail="运行记录不存在")
+
+    config = base_run.config or {}
+    history_start = config.get("start_time")
+    if not history_start:
+        raise HTTPException(status_code=400, detail="原始运行缺少起始时间，无法预估续跑调用次数")
+
+    last_record = (
+        db.query(AiInvestmentRecord)
+        .filter(AiInvestmentRecord.run_id == base_run.id)
+        .order_by(AiInvestmentRecord.timestamp.desc())
+        .first()
+    )
+
+    resume_from: Optional[datetime] = None
+    if last_record and last_record.timestamp:
+        resume_from = last_record.timestamp
+    elif base_run.completed_at:
+        resume_from = base_run.completed_at
+    else:
+        end_str = config.get("end_time")
+        if end_str:
+            try:
+                resume_from = _parse_iso_datetime(end_str)
+            except Exception:
+                resume_from = None
+    if resume_from is None:
+        raise HTTPException(status_code=400, detail="原始运行缺少续跑分界时间，无法预估续跑调用次数")
+
+    try:
+        start_time = _parse_iso_datetime(history_start)
+    except Exception:
+        raise HTTPException(status_code=400, detail="start_time 格式无效")
+
+    end_time: Optional[datetime] = None
+    if request.end_time:
+        try:
+            end_time = _parse_iso_datetime(request.end_time)
+        except Exception:
+            raise HTTPException(status_code=400, detail="end_time 格式无效")
+
+    provider = KlineDataProvider(db)
+    data_source = base_run.data_source
+    frequency = base_run.frequency
+    if data_source == "database":
+        frequency = "1d"
+
+    data = provider.get_kline(
+        symbol=base_run.symbol,
+        start_time=start_time,
+        end_time=end_time,
+        data_source=data_source,
+        frequency=frequency,
+    )
+
+    if data is None or data.empty:
+        raise HTTPException(status_code=400, detail="无法获取指定条件的K线数据")
+
+    if "date" not in data.columns:
+        raise HTTPException(status_code=400, detail="K线数据缺少日期列，无法预估续跑调用次数")
+
+    data = data.copy()
+    data["date"] = pd.to_datetime(data["date"])
+    data = data.sort_values("date").reset_index(drop=True)
+
+    data_length = len(data)
+    window = int(config.get("window", 20))
+    engine_window = window if window > 1 else 2
+
+    first_for_calls_index: Optional[int] = None
+    for j in range(engine_window + 1, data_length):
+        ts = data.iloc[j]["date"]
+        if ts > resume_from:
+            first_for_calls_index = j
+            break
+
+    if first_for_calls_index is None or first_for_calls_index >= data_length:
+        per_model_calls = 0
+    else:
+        per_model_calls = data_length - first_for_calls_index
+
+    models: List[str] = []
+    if isinstance(base_run.models, list):
+        models = base_run.models
+    model_count = len(models)
+    total_calls = per_model_calls * model_count
+    formula = "max(0, 有效续跑步数)"
+    message = (
+        f"续跑预估: 历史起点={history_start}, 续跑分界时间={resume_from.isoformat()}, "
+        f"窗口={engine_window}, 续跑段数据长度={data_length}, "
+        f"单个模型理论续跑调用次数约为 {per_model_calls} 次, "
+        f"{model_count} 个模型合计约 {total_calls} 次。"
+    )
+
+    return AiCallEstimateResponse(
+        data_length=data_length,
+        window=window,
+        engine_window=engine_window,
+        per_model_calls=per_model_calls,
+        model_count=model_count,
+        total_calls=total_calls,
+        formula=formula,
+        message=message,
+    )
+
+
 class AiRunItem(BaseModel):
     id: int
     name: str
@@ -670,6 +794,7 @@ class AiRunItem(BaseModel):
 def list_ai_runs(db: Session = Depends(get_db)):
     runs = (
         db.query(AiInvestmentRun)
+        .filter(AiInvestmentRun.parent_run_id.is_(None))
         .order_by(AiInvestmentRun.created_at.desc())
         .all()
     )
@@ -775,6 +900,19 @@ def get_ai_run_detail(run_id: int, db: Session = Depends(get_db)):
                     {"date": rec.timestamp, "close": float(rec.actual_price)}
                 )
 
+    config: Dict[str, Any] = {}
+    if isinstance(run.config, dict):
+        config = dict(run.config)
+    if records:
+        last_ts = records[-1].timestamp
+        if last_ts is not None:
+            try:
+                end_iso = last_ts.isoformat()
+            except Exception:
+                end_iso = str(last_ts)
+            if end_iso:
+                config["end_time"] = end_iso
+
     return AiRunResponse(
         status="success",
         message="获取AI投资运行详情成功",
@@ -788,7 +926,7 @@ def get_ai_run_detail(run_id: int, db: Session = Depends(get_db)):
         frequency=run.frequency,
         models=models,
         initial_capital=run.initial_capital,
-        config=run.config or {},
+        config=config,
     )
 
 
@@ -861,16 +999,24 @@ def resume_ai_run(
         .first()
     )
 
-    start_time: Optional[str] = None
-    if last_record and last_record.timestamp:
-        start_time = last_record.timestamp.isoformat()
-    elif base_run.completed_at:
-        start_time = base_run.completed_at.isoformat()
-    else:
-        start_time = config.get("end_time") or config.get("start_time")
-
-    if not start_time:
+    history_start = config.get("start_time")
+    if not history_start:
         raise HTTPException(status_code=400, detail="原始运行缺少起始时间，无法续跑")
+
+    resume_from: Optional[datetime] = None
+    if last_record and last_record.timestamp:
+        resume_from = last_record.timestamp
+    elif base_run.completed_at:
+        resume_from = base_run.completed_at
+    else:
+        end_str = config.get("end_time")
+        if end_str:
+            try:
+                resume_from = _parse_iso_datetime(end_str)
+            except Exception:
+                resume_from = None
+    if resume_from is None:
+        raise HTTPException(status_code=400, detail="原始运行缺少续跑分界时间，无法续跑")
 
     end_time = request.end_time
 
@@ -883,9 +1029,9 @@ def resume_ai_run(
         initial_capital = float(last_record.equity)
 
     resume_request = AiRunRequest(
-        name=request.name or f"{base_run.name}-续跑",
+        name=base_run.name,
         symbol=base_run.symbol,
-        start_time=start_time,
+        start_time=history_start,
         end_time=end_time,
         data_source=base_run.data_source,
         frequency=base_run.frequency,
@@ -898,7 +1044,13 @@ def resume_ai_run(
         window=int(config.get("window", 20)),
     )
 
-    return _perform_ai_run(resume_request, db, parent_run_id=base_run.id)
+    return _perform_ai_run(
+        resume_request,
+        db,
+        parent_run_id=None,
+        base_run=base_run,
+        resume_from=resume_from,
+    )
 
 
 class AiPromptSettingItem(BaseModel):
