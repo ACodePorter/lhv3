@@ -4,6 +4,7 @@ from typing import Any, Dict, List, Optional
 import base64
 import json
 import logging
+import math
 import threading
 import zlib
 
@@ -38,6 +39,25 @@ def _parse_iso_datetime(value: str) -> datetime:
     if dt.tzinfo is not None:
         dt = dt.replace(tzinfo=None)
     return dt
+
+
+def _json_safe_value(value: Any) -> Any:
+    if isinstance(value, datetime):
+        try:
+            return value.isoformat()
+        except Exception:
+            return str(value)
+    if isinstance(value, float) and not math.isfinite(value):
+        return None
+    return value
+
+
+def _sanitize_for_json(obj: Any) -> Any:
+    if isinstance(obj, dict):
+        return {k: _sanitize_for_json(v) for k, v in obj.items()}
+    if isinstance(obj, (list, tuple, set)):
+        return [_sanitize_for_json(v) for v in obj]
+    return _json_safe_value(obj)
 
 
 def _compress_json(data: Any) -> Optional[str]:
@@ -381,7 +401,11 @@ def _async_persist_run_logs(run_id: int, logs: List[Dict[str, Any]]) -> None:
                     level=str(item.get("level") or "INFO").upper(),
                     category=str(item.get("category") or "system"),
                     message=str(item.get("message") or ""),
-                    ai_input_compressed=_compress_json(item.get("ai_input")),
+                    ai_input_compressed=_compress_json(
+                        _sanitize_for_json(item.get("ai_input"))
+                        if item.get("ai_input") is not None
+                        else None
+                    ),
                     ai_output_compressed=_compress_json(item.get("ai_output")),
                     extra=item.get("extra") or None,
                 )
