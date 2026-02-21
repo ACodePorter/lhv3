@@ -137,6 +137,36 @@ const BacktestHistoryDetail: React.FC = () => {
     }
   };
 
+  const handleDeleteHistory = async (historyId: number) => {
+    if (!id) return;
+    
+    Modal.confirm({
+      title: '确认删除',
+      content: '此操作将永久删除该历史记录，是否继续？',
+      okText: '确认',
+      okType: 'danger',
+      cancelText: '取消',
+      onOk: async () => {
+        try {
+          const response = await axios.delete(`/api/backtest-status/${id}/history/${historyId}`);
+          if (response.data.status === 'success') {
+            message.success('删除成功');
+            if (selectedHistory && selectedHistory.id === historyId) {
+              setDetailModalVisible(false);
+              setSelectedHistory(null);
+            }
+            fetchHistoryList();
+          } else {
+            message.error(response.data.message || '删除失败');
+          }
+        } catch (error: any) {
+          console.error('删除历史记录失败:', error);
+          message.error('删除失败，请重试');
+        }
+      },
+    });
+  };
+
   // 历史记录表格列定义
   const historyColumns: ColumnsType<BacktestHistoryRecord> = [
     {
@@ -221,6 +251,14 @@ const BacktestHistoryDetail: React.FC = () => {
             loading={detailLoading}
           >
             查看
+          </Button>
+          <Button
+            type="link"
+            danger
+            icon={<DeleteOutlined />}
+            onClick={() => handleDeleteHistory(record.id)}
+          >
+            删除
           </Button>
         </Space>
       ),

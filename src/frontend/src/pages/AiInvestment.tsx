@@ -643,6 +643,45 @@ const AiInvestment: React.FC = () => {
     }
   };
 
+  const handleDeleteRun = async (run: AiRun) => {
+    Modal.confirm({
+      title: '确认删除该历史运行？',
+      content: '删除后将无法恢复该运行记录及相关明细，是否继续？',
+      okText: '删除',
+      okType: 'danger',
+      cancelText: '取消',
+      onOk: async () => {
+        try {
+          const res = await axios.delete(`/api/ai-investment/run/${run.id}`);
+          const data = res.data;
+          if (data && data.status === 'success') {
+            message.success('删除成功');
+            const list = await fetchRuns();
+            if (selectedRun && selectedRun.id === run.id) {
+              setSelectedRun(null);
+              setRecords([]);
+              setMetrics({});
+              setEquityCurves({});
+              setPriceSeries([]);
+            }
+            if (logRun && logRun.id === run.id) {
+              setLogModalVisible(false);
+              setLogRun(null);
+              setLogs([]);
+            }
+            if (list && Array.isArray(list)) {
+              setRuns(list);
+            }
+          } else {
+            message.error(data?.message || '删除失败');
+          }
+        } catch (error: any) {
+          message.error(error?.message || '删除运行记录失败');
+        }
+      },
+    });
+  };
+
   const handleViewRunLogs = (run: AiRun) => {
     setLogRun(run);
     setSelectedRecord(null);
@@ -771,6 +810,16 @@ const AiInvestment: React.FC = () => {
             }}
           >
             载入结果
+          </Button>
+          <Button
+            size="small"
+            danger
+            onClick={e => {
+              e.stopPropagation();
+              handleDeleteRun(record);
+            }}
+          >
+            删除
           </Button>
         </Space>
       ),

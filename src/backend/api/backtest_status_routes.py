@@ -210,6 +210,42 @@ async def get_backtest_history(
         logger.error(f"获取回测历史记录失败: {str(e)}")
         raise HTTPException(status_code=500, detail=f"获取回测历史记录失败: {str(e)}")
 
+@router.delete("/{status_id}/history/{history_id}", response_model=Dict[str, Any])
+async def delete_backtest_history(
+    status_id: int,
+    history_id: int,
+    db: Session = Depends(get_db)
+):
+    """删除单条回测历史记录"""
+    try:
+        status = db.query(BacktestStatus).filter(BacktestStatus.id == status_id).first()
+        if not status:
+            raise HTTPException(status_code=404, detail="回测状态不存在")
+        
+        history_record = db.query(BacktestHistory).filter(
+            BacktestHistory.id == history_id,
+            BacktestHistory.status_id == status_id
+        ).first()
+        if not history_record:
+            raise HTTPException(status_code=404, detail="历史记录不存在")
+        
+        db.delete(history_record)
+        db.commit()
+        
+        logger.info(f"已删除回测历史记录: 状态ID={status_id}, 历史ID={history_id}")
+        
+        return {
+            "status": "success",
+            "message": "历史记录已删除"
+        }
+        
+    except HTTPException:
+        raise
+    except Exception as e:
+        logger.error(f"删除回测历史记录失败: {str(e)}")
+        db.rollback()
+        raise HTTPException(status_code=500, detail=f"删除回测历史记录失败: {str(e)}")
+
 @router.post("/{status_id}/update", response_model=Dict[str, Any])
 async def update_backtest_status(
     status_id: int,

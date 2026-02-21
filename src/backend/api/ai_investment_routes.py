@@ -817,6 +817,24 @@ def list_ai_runs(db: Session = Depends(get_db)):
     return items
 
 
+@router.delete("/ai-investment/run/{run_id}", response_model=Dict[str, Any])
+def delete_ai_run(run_id: int, db: Session = Depends(get_db)):
+    run = db.query(AiInvestmentRun).filter(AiInvestmentRun.id == run_id).first()
+    if run is None:
+        raise HTTPException(status_code=404, detail="运行记录不存在")
+    try:
+        db.delete(run)
+        db.commit()
+        return {
+            "status": "success",
+            "message": "AI投资运行记录已删除",
+        }
+    except Exception as e:
+        logger.error("删除AI投资运行记录失败: %s", str(e))
+        db.rollback()
+        raise HTTPException(status_code=500, detail="删除AI投资运行记录失败")
+
+
 class AiRecordItem(BaseModel):
     id: int
     run_id: int
