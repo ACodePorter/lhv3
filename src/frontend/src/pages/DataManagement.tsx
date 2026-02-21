@@ -331,12 +331,12 @@ const DataManagement: React.FC = memo(() => {
       width: 80,
       render: (text) => <Tag color="blue">{text}</Tag>
     },
-    {
-      title: '交易所',
-      dataIndex: 'exchange',
-      key: 'exchange',
-      width: 80,
-    },
+    // {
+    //   title: '交易所',
+    //   dataIndex: 'exchange',
+    //   key: 'exchange',
+    //   width: 80,
+    // },
     {
       title: '记录数',
       dataIndex: 'records',

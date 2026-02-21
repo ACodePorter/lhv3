@@ -1,5 +1,5 @@
 import React, { useEffect, useMemo, useState } from 'react';
-import { Card, Row, Col, Form, Input, DatePicker, Select, Button, Space, Tag, Table, message, Modal, Typography } from 'antd';
+import { Card, Row, Col, Form, Input, DatePicker, Select, Button, Space, Tag, Table, message, Modal, Typography, Tooltip } from 'antd';
 import { LineChartOutlined, PlayCircleOutlined, FileTextOutlined, StepForwardOutlined } from '@ant-design/icons';
 import type { ColumnsType } from 'antd/es/table';
 import dayjs from 'dayjs';
@@ -877,16 +877,30 @@ const AiInvestment: React.FC = () => {
       dataIndex: 'trigger_reason',
       key: 'trigger_reason',
       width: 160,
-      ellipsis: true,
-      render: (text?: string) => text || '—',
+      ellipsis: { showTitle: false },
+      render: (text?: string) =>
+        text ? (
+          <Tooltip title={text} mouseEnterDelay={0} mouseLeaveDelay={0}>
+            <span>{text}</span>
+          </Tooltip>
+        ) : (
+          '—'
+        ),
     },
     {
       title: '预测原因',
       dataIndex: 'prediction_reason',
       key: 'prediction_reason',
       width: 160,
-      ellipsis: true,
-      render: (text?: string) => text || '—',
+      ellipsis: { showTitle: false },
+      render: (text?: string) =>
+        text ? (
+          <Tooltip title={text} mouseEnterDelay={0} mouseLeaveDelay={0}>
+            <span>{text}</span>
+          </Tooltip>
+        ) : (
+          '—'
+        ),
     },
     {
       title: '持仓',
