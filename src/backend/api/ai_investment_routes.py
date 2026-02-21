@@ -163,6 +163,8 @@ def _build_run_logs(
                 ai_output_value["content"] = entry.get("response")
             if entry.get("parsed_value") is not None:
                 ai_output_value["value"] = entry.get("parsed_value")
+            if entry.get("reason") is not None:
+                ai_output_value["reason"] = entry.get("reason")
             if entry.get("raw_response") is not None:
                 ai_output_value["raw_response"] = entry.get("raw_response")
             if entry.get("error_type") is not None:
@@ -530,6 +532,14 @@ def _perform_ai_run(
 
     records_data: List[Dict[str, Any]] = result.get("records", [])
     for rec in records_data:
+        extra_data: Dict[str, Any] = {}
+        trigger_reason_value = rec.get("trigger_reason")
+        prediction_reason_value = rec.get("prediction_reason")
+        if trigger_reason_value:
+            extra_data["trigger_reason"] = trigger_reason_value
+        if prediction_reason_value:
+            extra_data["prediction_reason"] = prediction_reason_value
+        extra_value = extra_data or None
         record = AiInvestmentRecord(
             run_id=run.id,
             model_type=rec.get("model_type"),
@@ -542,7 +552,7 @@ def _perform_ai_run(
             pnl=rec.get("pnl"),
             cumulative_pnl=rec.get("cumulative_pnl"),
             equity=rec.get("equity"),
-            extra={"trigger_reason": rec.get("trigger_reason")} if rec.get("trigger_reason") else None,
+            extra=extra_value,
         )
         db.add(record)
 
@@ -848,6 +858,7 @@ class AiRecordItem(BaseModel):
     cumulative_pnl: float
     equity: float
     trigger_reason: Optional[str] = None
+    prediction_reason: Optional[str] = None
 
 
 @router.get("/ai-investment/run/{run_id}/records", response_model=List[AiRecordItem])
@@ -874,6 +885,7 @@ def get_ai_run_records(run_id: int, db: Session = Depends(get_db)):
                 cumulative_pnl=rec.cumulative_pnl or 0.0,
                 equity=rec.equity or 0.0,
                 trigger_reason=(rec.extra or {}).get("trigger_reason") if rec.extra else None,
+                prediction_reason=(rec.extra or {}).get("prediction_reason") if rec.extra else None,
             )
         )
     return items

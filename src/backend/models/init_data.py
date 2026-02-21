@@ -38,21 +38,22 @@ def init_default_data():
             .filter(AiPromptSetting.scene == "ai_investment")
             .first()
         )
+        now = datetime.now()
+        system_prompt_text = (
+            "你是一个专注于股票量化交易的金融大模型，充当价格预测引擎。"
+            "\n\n"
+            "你的任务是根据输入的K线数据、账户状态和最近成交记录，预测下一根K线的收盘价，并用一句话说明主要原因。"
+            "\n\n"
+            "要求："
+            "\n1）第一部分输出一个数字作为预测收盘价；"
+            "\n2）第二部分用一句话总结主要原因，可以与数字在同一行，用逗号分隔；"
+            "\n3）数字应为合理的价格水平，不为负数，尽量接近当前价格量级；"
+            "\n4）可以保留2到6位小数；"
+            "\n5）充分利用给出的周期、买入/卖出阈值、止损和止盈参数来判断趋势和风险；"
+            "\n6）只使用输入的数据进行推断，不要编造外部信息或新闻；"
+            "\n7）如果历史数据较少，也要给出尽可能稳健的预测，而不是报错。"
+        )
         if not existing_prompt:
-            now = datetime.now()
-            system_prompt_text = (
-                "你是一个专注于股票量化交易的金融大模型，充当价格预测引擎。"
-                "\n\n"
-                "你的任务是根据输入的K线数据、账户状态和最近成交记录，预测下一根K线的收盘价。"
-                "\n\n"
-                "要求："
-                "\n1）只能输出一个数字，不要任何文字、解释、符号或单位；"
-                "\n2）数字应为合理的价格水平，不为负数，尽量接近当前价格量级；"
-                "\n3）可以保留2到6位小数；"
-                "\n4）充分利用给出的周期、买入/卖出阈值、止损和止盈参数来判断趋势和风险；"
-                "\n5）只使用输入的数据进行推断，不要编造外部信息或新闻；"
-                "\n6）如果历史数据较少，也要给出尽可能稳健的预测，而不是报错。"
-            )
             setting = AiPromptSetting(
                 model_type="deepseek",
                 scene="ai_investment",
@@ -62,6 +63,10 @@ def init_default_data():
                 updated_at=now,
             )
             db.add(setting)
+            db.commit()
+        else:
+            existing_prompt.system_prompt = system_prompt_text
+            existing_prompt.updated_at = now
             db.commit()
 
     except Exception as e:

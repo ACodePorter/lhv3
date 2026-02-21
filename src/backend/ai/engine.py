@@ -130,6 +130,7 @@ class AiInvestmentEngine:
                     "timestamp": timestamp,
                 }
                 predicted_price = model.predict_next_price(history, context)
+                prediction_reason = getattr(model, "last_reason", None)
                 if current_price <= 0:
                     change = 0.0
                 else:
@@ -294,6 +295,7 @@ class AiInvestmentEngine:
                     "cumulative_pnl": float(model_state["cumulative_pnl"]),
                     "equity": float(equity),
                     "trigger_reason": trigger_reason,
+                    "prediction_reason": prediction_reason,
                 }
                 records.append(record)
 

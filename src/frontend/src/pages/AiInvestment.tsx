@@ -42,6 +42,7 @@ interface AiRecord {
   cumulative_pnl: number;
   equity: number;
   trigger_reason?: string;
+  prediction_reason?: string;
 }
 
 interface AiRunLog {
@@ -118,15 +119,16 @@ interface AiPromptSettingItem {
 const DEFAULT_SYSTEM_PROMPT = [
   '你是一个专注于股票量化交易的金融大模型，充当价格预测引擎。',
   '',
-  '你的任务是根据输入的K线数据、账户状态和最近成交记录，预测下一根K线的收盘价。',
+  '你的任务是根据输入的K线数据、账户状态和最近成交记录，预测下一根K线的收盘价，并用一句话说明主要原因。',
   '',
   '要求：',
-  '1）只能输出一个数字，不要任何文字、解释、符号或单位；',
-  '2）数字应为合理的价格水平，不为负数，尽量接近当前价格量级；',
-  '3）可以保留2到6位小数；',
-  '4）充分利用给出的周期、买入/卖出阈值、止损和止盈参数来判断趋势和风险；',
-  '5）只使用输入的数据进行推断，不要编造外部信息或新闻；',
-  '6）如果历史数据较少，也要给出尽可能稳健的预测，而不是报错。',
+  '1）第一部分输出一个数字作为预测收盘价；',
+  '2）第二部分用一句话总结主要原因，可以与数字在同一行，用逗号分隔；',
+  '3）数字应为合理的价格水平，不为负数，尽量接近当前价格量级；',
+  '4）可以保留2到6位小数；',
+  '5）充分利用给出的周期、买入/卖出阈值、止损和止盈参数来判断趋势和风险；',
+  '6）只使用输入的数据进行推断，不要编造外部信息或新闻；',
+  '7）如果历史数据较少，也要给出尽可能稳健的预测，而不是报错。',
 ].join('\n');
 
 const AiInvestment: React.FC = () => {
@@ -879,6 +881,14 @@ const AiInvestment: React.FC = () => {
       render: (text?: string) => text || '—',
     },
     {
+      title: '预测原因',
+      dataIndex: 'prediction_reason',
+      key: 'prediction_reason',
+      width: 160,
+      ellipsis: true,
+      render: (text?: string) => text || '—',
+    },
+    {
       title: '持仓',
       dataIndex: 'position',
       key: 'position',
@@ -1294,6 +1304,7 @@ const AiInvestment: React.FC = () => {
               initialValues={{
                 data_source: 'database',
                 frequency: '1d',
+                models: ['deepseek'],
                 initial_capital: 100000,
                 buy_threshold: 0.002,
                 sell_threshold: -0.002,
@@ -1680,6 +1691,14 @@ const AiInvestment: React.FC = () => {
                 <div>{selectedRecord.equity.toFixed(2)}</div>
               </Col>
             </Row>
+            {selectedRecord.prediction_reason && (
+              <Row gutter={16} style={{ marginBottom: 12 }}>
+                <Col span={24}>
+                  <Text strong>预测原因</Text>
+                  <div>{selectedRecord.prediction_reason}</div>
+                </Col>
+              </Row>
+            )}
             {predictionAiCallLog && (
               <>
                 <Row gutter={16} style={{ marginBottom: 8 }}>

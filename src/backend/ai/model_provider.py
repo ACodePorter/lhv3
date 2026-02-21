@@ -54,6 +54,7 @@ class DeepSeekPriceModel(AIModel):
         super().__init__(name, config)
         self.fallback = SimplePriceModel(name, config)
         self.call_logs: List[Dict[str, Any]] = []
+        self.last_reason: Optional[str] = None
 
     def _get_system_prompt(self) -> str:
         value = self.config.get("system_prompt")
@@ -71,7 +72,7 @@ class DeepSeekPriceModel(AIModel):
         finally:
             if db is not None:
                 db.close()
-        return "你是一个专业的金融量化模型，只输出数字。"
+        return "你是一个专业的金融量化模型，需要输出预测价格并用一句话说明主要原因。"
 
     def _build_prompt(self, history: pd.DataFrame, context: Optional[Dict[str, Any]] = None) -> str:
         window = int(self.config.get("window", 5))
@@ -158,7 +159,8 @@ class DeepSeekPriceModel(AIModel):
             "你的任务是根据这些信息预测“下一根K线的收盘价”，单位与输入数据一致。"
         )
         header_parts.append(
-            "严格要求：只输出一个数字，不要输出任何其他内容（不要文字、不要单位、不要解释）。"
+            "输出格式要求：先给出一个数字表示预测收盘价，然后用一句话解释主要原因，"
+            "可以在同一行用逗号分隔，例如：123.45, 近期放量上涨、趋势保持强势。"
         )
 
         sections: List[str] = []
@@ -208,12 +210,18 @@ class DeepSeekPriceModel(AIModel):
             "system_prompt": system_prompt,
             "prompt": prompt,
             "request": {
-                "model": "deepseek-chat",
-                "temperature": 0.1,
+                "url": url,
+                "method": "POST",
+                "payload": payload,
+                "headers": {
+                    "Content-Type": headers.get("Content-Type"),
+                    "Authorization": "Bearer ***",
+                },
             },
             "context": context or {},
             "success": False,
         }
+        self.last_reason = None
         if not api_key:
             log_entry["error_type"] = "config"
             log_entry["error_message"] = "DeepSeek API key is missing"
@@ -276,6 +284,24 @@ class DeepSeekPriceModel(AIModel):
             log_entry["raw_response"] = body
             self.call_logs.append(log_entry)
             raise RuntimeError(f"DeepSeek response format error: {e}")
+        text = str(content or "").strip()
+        reason = None
+        if text:
+            lines = [line.strip() for line in text.splitlines() if line.strip()]
+            if lines:
+                reason = lines[0]
+            else:
+                reason = text
+            if reason:
+                m_head = re.search(r"[-+]?\d*\.?\d+(?:[eE][-+]?\d+)?", reason)
+                if m_head:
+                    idx = m_head.end()
+                    tail = reason[idx:].lstrip(" ,，:：")
+                    if tail:
+                        reason = tail
+        self.last_reason = reason
+        if reason is not None:
+            log_entry["reason"] = reason
         match = re.search(r"[-+]?\d*\.?\d+(?:[eE][-+]?\d+)?", content)
         if not match:
             logger.error("模型%s从DeepSeek返回中未找到数字: %s", self.name, content)
