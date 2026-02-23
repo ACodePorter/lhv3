@@ -20,6 +20,8 @@ class AkshareDataFetcher(DataFetcher):
     
     def __init__(self, base_path: str = None):
         super().__init__("akshare", base_path)
+        self.default_adjust = "qfq"
+        logger.info(f"AkShare 数据抓取器初始化，默认复权模式: {self.default_adjust}")
         
         # 常用A股代码列表
         self.popular_a_stocks = [
@@ -102,7 +104,7 @@ class AkshareDataFetcher(DataFetcher):
             else:
                 start_date = start_date.replace('-', '')
             
-            logger.info(f"从AkShare抓取数据: {symbol}, 日期范围: {start_date} 至 {end_date}")
+            logger.info(f"从AkShare抓取数据: {symbol}, 日期范围: {start_date} 至 {end_date}, 复权模式: {self.default_adjust}")
             
             # 判断是A股、美股还是港股
             if self._is_us_stock(symbol):
@@ -119,9 +121,14 @@ class AkshareDataFetcher(DataFetcher):
     def _fetch_a_stock_data(self, symbol: str, start_date: str, end_date: str) -> pd.DataFrame:
         """抓取A股数据"""
         try:
-            # 获取A股历史数据
-            stock_data = ak.stock_zh_a_hist(symbol=symbol, period="daily", 
-                                          start_date=start_date, end_date=end_date, adjust="")
+            logger.info(f"调用 A 股接口 stock_zh_a_hist: symbol={symbol}, adjust={self.default_adjust}")
+            stock_data = ak.stock_zh_a_hist(
+                symbol=symbol,
+                period="daily",
+                start_date=start_date,
+                end_date=end_date,
+                adjust=self.default_adjust,
+            )
             
             if stock_data.empty:
                 logger.warning(f"AkShare未返回A股数据: {symbol}")
@@ -148,8 +155,8 @@ class AkshareDataFetcher(DataFetcher):
     def _fetch_us_stock_data(self, symbol: str, start_date: str, end_date: str) -> pd.DataFrame:
         """抓取美股数据"""
         try:
-            # 使用stock_us_daily接口获取美股历史数据
-            stock_data = ak.stock_us_daily(symbol=symbol)
+            logger.info(f"调用美股接口 stock_us_daily: symbol={symbol}, adjust={self.default_adjust}")
+            stock_data = ak.stock_us_daily(symbol=symbol, adjust=self.default_adjust)
             
             if stock_data is None or stock_data.empty:
                 logger.warning(f"AkShare未返回美股数据: {symbol}")
@@ -196,9 +203,14 @@ class AkshareDataFetcher(DataFetcher):
             
             # 方法1: 使用 stock_hk_hist_min_em (修复参数问题)
             try:
-                logger.info(f"尝试使用 stock_hk_hist_min_em 抓取港股数据: {symbol}")
-                # 使用正确的参数调用
-                stock_data = ak.stock_hk_hist_min_em(symbol=symbol, period="daily", start_date=start_date, end_date=end_date, adjust="")
+                logger.info(f"尝试使用 stock_hk_hist_min_em 抓取港股数据: {symbol}, adjust={self.default_adjust}")
+                stock_data = ak.stock_hk_hist_min_em(
+                    symbol=symbol,
+                    period="daily",
+                    start_date=start_date,
+                    end_date=end_date,
+                    adjust=self.default_adjust,
+                )
                 if stock_data is not None and not stock_data.empty:
                     logger.info(f"使用 stock_hk_hist_min_em 成功获取港股数据: {symbol}")
                 else:
@@ -211,8 +223,13 @@ class AkshareDataFetcher(DataFetcher):
             # 方法2: 使用 stock_hk_hist (东方财富历史数据)
             if stock_data is None or stock_data.empty:
                 try:
-                    logger.info(f"尝试使用 stock_hk_hist 抓取港股数据: {symbol}")
-                    stock_data = ak.stock_hk_hist(symbol=symbol, start_date=start_date, end_date=end_date, adjust="")
+                    logger.info(f"尝试使用 stock_hk_hist 抓取港股数据: {symbol}, adjust={self.default_adjust}")
+                    stock_data = ak.stock_hk_hist(
+                        symbol=symbol,
+                        start_date=start_date,
+                        end_date=end_date,
+                        adjust=self.default_adjust,
+                    )
                     if stock_data is not None and not stock_data.empty:
                         logger.info(f"使用 stock_hk_hist 成功获取港股数据: {symbol}")
                     else:
