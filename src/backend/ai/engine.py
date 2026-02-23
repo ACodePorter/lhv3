@@ -139,6 +139,7 @@ class AiInvestmentEngine:
                 action = "HOLD"
                 pnl = 0.0
                 trigger_reason = "未触发买卖、止损或止盈条件"
+                trade_price = None
 
                 equity_before = model_state["cash"] + model_state["position"] * current_price
 
@@ -213,6 +214,7 @@ class AiInvestmentEngine:
                     model_state["position"] = quantity
                     model_state["entry_price"] = execution_price_buy
                     model_state["pending_commission"] = buy_commission
+                    trade_price = float(execution_price_buy)
                     model_state.setdefault("trades", []).append(
                         {
                             "timestamp": timestamp,
@@ -246,6 +248,7 @@ class AiInvestmentEngine:
                     model_state["pending_commission"] = 0.0
                     pnl = trade_pnl
                     model_state["cumulative_pnl"] += trade_pnl
+                    trade_price = float(execution_price_sell)
                     model_state.setdefault("trades", []).append(
                         {
                             "timestamp": timestamp,
@@ -296,6 +299,7 @@ class AiInvestmentEngine:
                     "equity": float(equity),
                     "trigger_reason": trigger_reason,
                     "prediction_reason": prediction_reason,
+                    "trade_price": float(trade_price) if trade_price is not None else None,
                 }
                 records.append(record)
 

@@ -559,10 +559,13 @@ def _perform_ai_run(
         extra_data: Dict[str, Any] = {}
         trigger_reason_value = rec.get("trigger_reason")
         prediction_reason_value = rec.get("prediction_reason")
+        trade_price_value = rec.get("trade_price")
         if trigger_reason_value:
             extra_data["trigger_reason"] = trigger_reason_value
         if prediction_reason_value:
             extra_data["prediction_reason"] = prediction_reason_value
+        if trade_price_value is not None:
+            extra_data["trade_price"] = trade_price_value
         extra_value = extra_data or None
         record = AiInvestmentRecord(
             run_id=run.id,
@@ -883,6 +886,7 @@ class AiRecordItem(BaseModel):
     equity: float
     trigger_reason: Optional[str] = None
     prediction_reason: Optional[str] = None
+    trade_price: Optional[float] = None
 
 
 @router.get("/ai-investment/run/{run_id}/records", response_model=List[AiRecordItem])
@@ -910,6 +914,7 @@ def get_ai_run_records(run_id: int, db: Session = Depends(get_db)):
                 equity=rec.equity or 0.0,
                 trigger_reason=(rec.extra or {}).get("trigger_reason") if rec.extra else None,
                 prediction_reason=(rec.extra or {}).get("prediction_reason") if rec.extra else None,
+                trade_price=(rec.extra or {}).get("trade_price") if rec.extra else None,
             )
         )
     return items

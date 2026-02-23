@@ -43,6 +43,7 @@ interface AiRecord {
   equity: number;
   trigger_reason?: string;
   prediction_reason?: string;
+  trade_price?: number;
 }
 
 interface AiRunLog {
@@ -216,8 +217,13 @@ const AiInvestment: React.FC = () => {
     try {
       const res = await axios.get<AiRecord[]>(`/api/ai-investment/run/${runId}/records`);
       const list = res.data || [];
-      setRecords(list);
-      return list;
+      const sorted = [...list].sort((a, b) => {
+        const ta = dayjs(a.timestamp).valueOf();
+        const tb = dayjs(b.timestamp).valueOf();
+        return tb - ta;
+      });
+      setRecords(sorted);
+      return sorted;
     } catch (error: any) {
       message.error(error?.message || '获取AI投资预测明细失败');
     } finally {
@@ -873,6 +879,13 @@ const AiInvestment: React.FC = () => {
       },
     },
     {
+      title: '交易价格',
+      dataIndex: 'trade_price',
+      key: 'trade_price',
+      render: (v: number | undefined, record: AiRecord) =>
+        v == null || record.action === 'HOLD' ? '—' : v.toFixed(4),
+    },
+    {
       title: '触发原因',
       dataIndex: 'trigger_reason',
       key: 'trigger_reason',
@@ -1116,7 +1129,7 @@ const AiInvestment: React.FC = () => {
       if (index === undefined) {
         return;
       }
-      const price = r.actual_price ?? actualMap.get(key) ?? null;
+      const price = r.trade_price ?? r.actual_price ?? actualMap.get(key) ?? null;
       if (price == null) {
         return;
       }
