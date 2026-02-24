@@ -27,6 +27,7 @@ interface AiRun {
   status: string;
   created_at: string;
   completed_at?: string;
+  config?: any;
 }
 
 interface AiRecord {
@@ -496,9 +497,17 @@ const AiInvestment: React.FC = () => {
     }
   };
 
-  const handleRowClick = (run: AiRun) => {
+  const handleRowClick = async (run: AiRun) => {
     setSelectedRun(run);
     fetchRecords(run);
+    try {
+      const res = await axios.get(`/api/ai-investment/run/${run.id}`);
+      if (res.data && res.data.status === 'success') {
+        setSelectedRun(prev => (prev?.id === run.id ? { ...prev, ...res.data } : prev));
+      }
+    } catch (e) {
+      // ignore
+    }
   };
 
   const handleResumeRun = async (run: AiRun) => {
@@ -585,7 +594,7 @@ const AiInvestment: React.FC = () => {
       const res = await axios.get(`/api/ai-investment/run/${run.id}`);
       const data = res.data;
       if (data && data.status === 'success') {
-        setSelectedRun(run);
+        setSelectedRun({ ...run, ...data });
         setMetrics(data.metrics || {});
         setEquityCurves(data.equity_curves || {});
         setPriceSeries(data.price_series || []);
@@ -1128,6 +1137,7 @@ const AiInvestment: React.FC = () => {
 
     const buyPoints: { index: number; price: number }[] = [];
     const sellPoints: { index: number; price: number }[] = [];
+    const actionMap = new Map<string, { action: string; price: number; model: string }[]>();
 
     records.forEach(r => {
       const key = dayjs(r.timestamp).format(dateFormat);
@@ -1143,6 +1153,17 @@ const AiInvestment: React.FC = () => {
         buyPoints.push({ index, price });
       } else if (r.action === 'SELL') {
         sellPoints.push({ index, price });
+      }
+
+      if (r.action === 'BUY' || r.action === 'SELL') {
+        if (!actionMap.has(key)) {
+          actionMap.set(key, []);
+        }
+        actionMap.get(key)!.push({
+          action: r.action,
+          price,
+          model: r.model_type,
+        });
       }
     });
 
@@ -1245,6 +1266,37 @@ const AiInvestment: React.FC = () => {
             backgroundColor: '#555',
           },
         },
+        formatter: (params: any[]) => {
+          if (!params || params.length === 0) return '';
+          const date = params[0].axisValue;
+          let html = `<div style="margin-bottom: 4px; font-weight: bold">${date}</div>`;
+
+          params.forEach(p => {
+            const value = p.value != null ? Number(p.value).toFixed(2) : '-';
+            html += `<div style="display: flex; justify-content: space-between; align-items: center; margin-bottom: 4px;">
+              <span>${p.marker} ${p.seriesName}</span>
+              <span style="font-weight: bold; margin-left: 12px">${value}</span>
+            </div>`;
+          });
+
+          const actions = actionMap.get(date);
+          if (actions && actions.length > 0) {
+            html += '<div style="margin-top: 8px; border-top: 1px solid rgba(255,255,255,0.2); padding-top: 8px;">';
+            actions.forEach(a => {
+              const color = a.action === 'BUY' ? '#f64034' : '#00b46a';
+              const actionText = a.action === 'BUY' ? '买入' : '卖出';
+              html += `<div style="display: flex; justify-content: space-between; align-items: center; margin-bottom: 4px;">
+                <span>
+                  <span style="display:inline-block;margin-right:4px;border-radius:50%;width:10px;height:10px;background-color:${color};"></span>
+                  ${a.model} ${actionText}
+                </span>
+                <span style="font-weight: bold; margin-left: 12px; color: ${color}">${a.price.toFixed(2)}</span>
+              </div>`;
+            });
+            html += '</div>';
+          }
+          return html;
+        },
       },
       legend: {
         top: 0,
@@ -1318,6 +1370,22 @@ const AiInvestment: React.FC = () => {
       render: (v: number) => v.toFixed(2),
     },
   ];
+
+  const runHeaderInfo = useMemo(() => {
+    if (!selectedRun) {
+      return '';
+    }
+    const symbol = selectedRun.symbol;
+    let latestDate = selectedRun.completed_at;
+    if (records.length > 0 && records[0].run_id === selectedRun.id) {
+      latestDate = records[records.length - 1].timestamp;
+    }
+    const dateStr = latestDate ? dayjs(latestDate).format('YYYY-MM-DD') : '-';
+    const config = (selectedRun as any).config || {};
+    const useAiAction = !!config.use_ai_action;
+    const aiActionStr = useAiAction ? '是' : '否';
+    return `（${symbol}, 截止预测更新到 ${dateStr}, 是否AI决定买卖点: ${aiActionStr}）`;
+  }, [selectedRun, records]);
 
   return (
     <div>
@@ -1600,20 +1668,20 @@ const AiInvestment: React.FC = () => {
 
       <Row gutter={16} style={{ marginTop: 16 }}>
         <Col span={12}>
-          <Card title="价格与模型预测（含买卖点）">
-            <OptimizedChart option={priceChartOption} style={{ height: 540 }} />
+          <Card title={`价格与模型预测（含买卖点）${runHeaderInfo}`}>
+            <OptimizedChart option={priceChartOption} height={450} style={{ height: 450 }} />
           </Card>
         </Col>
         <Col span={12}>
           <Card title="账户权益曲线">
-            <OptimizedChart option={equityChartOption} style={{ height: 540 }} />
+            <OptimizedChart option={equityChartOption} height={450} style={{ height: 450 }} />
           </Card>
         </Col>
       </Row>
 
       <Row gutter={16} style={{ marginTop: 16 }}>
         <Col span={24}>
-          <Card title="预测明细">
+          <Card title={`预测明细${runHeaderInfo}`}>
             <Table
               rowKey={(r, index) => `${r.model_type}-${r.timestamp}-${index}`}
               loading={recordsLoading}
