@@ -1,5 +1,5 @@
 import React, { useEffect, useMemo, useState } from 'react';
-import { Card, Row, Col, Form, Input, DatePicker, Select, Button, Space, Tag, Table, message, Modal, Typography, Tooltip } from 'antd';
+import { Card, Row, Col, Form, Input, DatePicker, Select, Button, Space, Tag, Table, message, Modal, Typography, Tooltip, Checkbox } from 'antd';
 import { LineChartOutlined, PlayCircleOutlined, FileTextOutlined, StepForwardOutlined } from '@ant-design/icons';
 import type { ColumnsType } from 'antd/es/table';
 import dayjs from 'dayjs';
@@ -120,16 +120,19 @@ interface AiPromptSettingItem {
 const DEFAULT_SYSTEM_PROMPT = [
   '你是一个专注于股票量化交易的金融大模型，充当价格预测引擎。',
   '',
-  '你的任务是根据输入的K线数据、账户状态和最近成交记录，预测下一根K线的收盘价，并用一句话说明主要原因。',
+  '你的任务是根据输入的K线数据、账户状态和最近成交记录，预测下一根K线的收盘价，并用一句话说明主要原因，',
+  '同时综合判断此刻应该执行“买入(BUY) / 卖出(SELL) / 观望(HOLD)”中的哪一种操作，',
+  '以及本次操作建议使用的仓位比例（0 到 1 之间的小数）。',
   '',
   '要求：',
   '1）第一部分输出一个数字作为预测收盘价；',
   '2）第二部分用一句话总结主要原因，可以与数字在同一行，用逗号分隔；',
-  '3）数字应为合理的价格水平，不为负数，尽量接近当前价格量级；',
-  '4）可以保留2到6位小数；',
-  '5）充分利用给出的周期、买入/卖出阈值、止损和止盈参数来判断趋势和风险；',
-  '6）只使用输入的数据进行推断，不要编造外部信息或新闻；',
-  '7）如果历史数据较少，也要给出尽可能稳健的预测，而不是报错。',
+  '3）在同一行最后明确给出操作指令和仓位比例，格式为“操作: BUY / SELL / HOLD, 仓位: x”，其中 x 为 0 到 1 之间的小数（例如 0.25 表示使用 25% 可用资金）；',
+  '4）数字应为合理的价格水平，不为负数，尽量接近当前价格量级；',
+  '5）可以保留2到6位小数；',
+  '6）充分利用给出的周期、买入/卖出阈值、止损和止盈参数来判断趋势和风险；',
+  '7）只使用输入的数据进行推断，不要编造外部信息或新闻；',
+  '8）如果历史数据较少，也要给出尽可能稳健的预测，而不是报错。',
 ].join('\n');
 
 const AiInvestment: React.FC = () => {
@@ -376,6 +379,7 @@ const AiInvestment: React.FC = () => {
         window: values.window || 20,
         commission_rate: values.commission_rate ?? 0.0015,
         slippage_rate: values.slippage_rate ?? 0.001,
+        use_ai_action: !!values.use_ai_action,
       };
 
       setRunning(true);
@@ -450,6 +454,7 @@ const AiInvestment: React.FC = () => {
         window: values.window || 20,
         commission_rate: values.commission_rate ?? 0.0015,
         slippage_rate: values.slippage_rate ?? 0.001,
+        use_ai_action: !!values.use_ai_action,
       };
       setEstimatingCalls(true);
       const res = await axios.post('/api/ai-investment/estimate-calls', payload);
@@ -626,6 +631,7 @@ const AiInvestment: React.FC = () => {
           window: config.window,
           commission_rate: config.commission_rate,
           slippage_rate: config.slippage_rate,
+          use_ai_action: config.use_ai_action,
         };
 
         if (timeRange) {
@@ -1340,6 +1346,7 @@ const AiInvestment: React.FC = () => {
                 window: 20,
                 commission_rate: 0.0015,
                 slippage_rate: 0.001,
+                use_ai_action: false,
               }}
             >
               <Row gutter={16}>
@@ -1518,6 +1525,13 @@ const AiInvestment: React.FC = () => {
                 <Col span={6}>
                   <Form.Item name="slippage_rate" label="滑点比例">
                     <Input type="number" step="0.0001" />
+                  </Form.Item>
+                </Col>
+              </Row>
+              <Row gutter={16}>
+                <Col span={8}>
+                  <Form.Item name="use_ai_action" valuePropName="checked">
+                    <Checkbox>让AI直接决定买入 / 卖出 / 观望</Checkbox>
                   </Form.Item>
                 </Col>
               </Row>

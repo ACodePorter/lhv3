@@ -103,6 +103,7 @@ class AiRunRequest(BaseModel):
     window: int = 20
     commission_rate: float = 0.0015
     slippage_rate: float = 0.001
+    use_ai_action: bool = False
 
 
 class AiRunResponse(BaseModel):
@@ -482,6 +483,7 @@ def _perform_ai_run(
                 "window": request.window,
                 "commission_rate": request.commission_rate,
                 "slippage_rate": request.slippage_rate,
+                "use_ai_action": request.use_ai_action,
             },
             performance_metrics={},
             created_at=datetime.now(),
@@ -523,6 +525,7 @@ def _perform_ai_run(
         "stop_loss_pct": request.stop_loss_pct,
         "take_profit_pct": request.take_profit_pct,
         "window": engine_window,
+        "use_ai_action": request.use_ai_action,
     }
 
     engine = AiInvestmentEngine(
@@ -1101,6 +1104,9 @@ def resume_ai_run(
         stop_loss_pct=float(config.get("stop_loss_pct", 0.05)),
         take_profit_pct=float(config.get("take_profit_pct", 0.1)),
         window=int(config.get("window", 20)),
+        commission_rate=float(config.get("commission_rate", 0.0015)),
+        slippage_rate=float(config.get("slippage_rate", 0.001)),
+        use_ai_action=bool(config.get("use_ai_action", False)),
     )
 
     return _perform_ai_run(

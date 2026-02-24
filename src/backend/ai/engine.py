@@ -1,6 +1,7 @@
 from typing import Any, Dict, List, Tuple, Optional
 
 import logging
+import re
 from datetime import datetime
 import numpy as np
 import pandas as pd
@@ -50,6 +51,7 @@ class AiInvestmentEngine:
         commission_rate = float(self.config.get("commission_rate", 0.0))
         slippage_rate = float(self.config.get("slippage_rate", 0.0))
         window = int(self.config.get("window", 20))
+        use_ai_action = bool(self.config.get("use_ai_action", False))
         if window <= 1:
             window = 2
 
@@ -131,6 +133,18 @@ class AiInvestmentEngine:
                 }
                 predicted_price = model.predict_next_price(history, context)
                 prediction_reason = getattr(model, "last_reason", None)
+                ai_action_raw: Optional[str] = None
+                ai_position_ratio: Optional[float] = None
+                if isinstance(prediction_reason, str):
+                    m_action = re.search(r"\b(BUY|SELL|HOLD)\b", prediction_reason, re.IGNORECASE)
+                    if m_action:
+                        ai_action_raw = m_action.group(1).upper()
+                    m_pos = re.search(r"仓位\s*[:：]\s*([0-9]*\.?[0-9]+)", prediction_reason)
+                    if m_pos:
+                        try:
+                            ai_position_ratio = float(m_pos.group(1))
+                        except Exception:
+                            ai_position_ratio = None
                 if current_price <= 0:
                     change = 0.0
                 else:
@@ -143,6 +157,7 @@ class AiInvestmentEngine:
 
                 equity_before = model_state["cash"] + model_state["position"] * current_price
 
+                risk_forced = False
                 if model_state["position"] > 0 and model_state["entry_price"] > 0:
                     drawdown = (current_price - model_state["entry_price"]) / model_state["entry_price"]
                     if drawdown <= -stop_loss_pct:
@@ -158,6 +173,7 @@ class AiInvestmentEngine:
                             model_state["entry_price"],
                             drawdown,
                         )
+                        risk_forced = True
                     elif drawdown >= take_profit_pct:
                         action = "SELL"
                         trigger_reason = (
@@ -171,8 +187,9 @@ class AiInvestmentEngine:
                             model_state["entry_price"],
                             drawdown,
                         )
+                        risk_forced = True
 
-                if action == "HOLD":
+                if not risk_forced:
                     if change >= buy_threshold and model_state["position"] == 0:
                         action = "BUY"
                         trigger_reason = (
@@ -200,38 +217,59 @@ class AiInvestmentEngine:
                             change,
                         )
 
+                if use_ai_action and not risk_forced and ai_action_raw:
+                    desired_action = None
+                    if ai_action_raw == "BUY" and model_state["position"] == 0:
+                        desired_action = "BUY"
+                    elif ai_action_raw == "SELL" and model_state["position"] > 0:
+                        desired_action = "SELL"
+                    elif ai_action_raw == "HOLD":
+                        desired_action = "HOLD"
+                    if desired_action is not None and desired_action != action:
+                        action = desired_action
+                        if prediction_reason:
+                            trigger_reason = f"AI指令操作: {desired_action}，原因: {prediction_reason}"
+                        else:
+                            trigger_reason = f"AI指令操作: {desired_action}"
+
                 if action == "BUY" and model_state["position"] == 0 and current_price > 0:
                     execution_price_buy = current_price * (1.0 + slippage_rate)
                     if execution_price_buy <= 0:
                         execution_price_buy = current_price
+                    cash_for_trade = model_state["cash"]
+                    if use_ai_action and ai_position_ratio is not None:
+                        ratio = max(0.0, min(ai_position_ratio, 1.0))
+                        cash_for_trade = model_state["cash"] * ratio
                     if commission_rate > 0:
-                        quantity = model_state["cash"] / (execution_price_buy * (1.0 + commission_rate))
+                        denom = execution_price_buy * (1.0 + commission_rate)
                     else:
-                        quantity = model_state["cash"] / execution_price_buy
+                        denom = execution_price_buy
+                    quantity = cash_for_trade / denom if denom > 0 else 0.0
                     trade_value = execution_price_buy * quantity
                     buy_commission = trade_value * commission_rate if commission_rate > 0 else 0.0
-                    model_state["cash"] -= trade_value + buy_commission
-                    model_state["position"] = quantity
-                    model_state["entry_price"] = execution_price_buy
-                    model_state["pending_commission"] = buy_commission
-                    trade_price = float(execution_price_buy)
-                    model_state.setdefault("trades", []).append(
-                        {
-                            "timestamp": timestamp,
-                            "action": "BUY",
-                            "price": float(execution_price_buy),
-                            "quantity": float(quantity),
-                            "pnl": 0.0,
-                        }
-                    )
-                    logger.info(
-                        "执行买入: model=%s, 时间=%s, 买入价=%.6f, 数量=%.6f, 账户现金=%.2f",
-                        name,
-                        timestamp,
-                        execution_price_buy,
-                        quantity,
-                        model_state["cash"],
-                    )
+                    if quantity > 0 and trade_value > 0:
+                        model_state["cash"] -= trade_value + buy_commission
+                        model_state["position"] = quantity
+                        model_state["entry_price"] = execution_price_buy
+                        model_state["pending_commission"] = buy_commission
+                        trade_price = float(execution_price_buy)
+                        model_state.setdefault("trades", []).append(
+                            {
+                                "timestamp": timestamp,
+                                "action": "BUY",
+                                "price": float(execution_price_buy),
+                                "quantity": float(quantity),
+                                "pnl": 0.0,
+                            }
+                        )
+                        logger.info(
+                            "执行买入: model=%s, 时间=%s, 买入价=%.6f, 数量=%.6f, 账户现金=%.2f",
+                            name,
+                            timestamp,
+                            execution_price_buy,
+                            quantity,
+                            model_state["cash"],
+                        )
                 elif action == "SELL" and model_state["position"] > 0 and current_price > 0:
                     quantity = model_state["position"]
                     execution_price_sell = current_price * (1.0 - slippage_rate)
